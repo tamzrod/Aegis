@@ -34,5 +34,10 @@ func Load(path string) (*Config, error) {
 		cfg.Replicator.Units[i].Target.Mode = m
 	}
 
+	// Apply webui defaults.
+	if cfg.WebUI.Listen == "" {
+		cfg.WebUI.Listen = ":8080"
+	}
+
 	return &cfg, nil
 }
