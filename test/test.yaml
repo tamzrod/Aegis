@@ -37,11 +37,9 @@ replicator:
         - fc: 3               # Read Holding Registers
           address: 0
           quantity: 10
+          interval_ms: 1000
 
       target:
         listener_id: "primary"
         unit_id: 1
         status_unit_id: 255
-
-      poll:
-        interval_ms: 1000

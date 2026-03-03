@@ -64,14 +64,14 @@ func buildUnit(
 			FC:       r.FC,
 			Address:  r.Address,
 			Quantity: r.Quantity,
+			Interval: time.Duration(r.IntervalMs) * time.Millisecond,
 		})
 	}
 
 	p, err := NewPoller(
 		PollerConfig{
-			UnitID:   u.ID,
-			Interval: time.Duration(u.Poll.IntervalMs) * time.Millisecond,
-			Reads:    reads,
+			UnitID: u.ID,
+			Reads:  reads,
 		},
 		nil,     // no initial client; lazy connect on first tick
 		factory,

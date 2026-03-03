@@ -70,7 +70,6 @@ type UnitConfig struct {
 	Source SourceConfig `yaml:"source"`
 	Reads  []ReadConfig `yaml:"reads"`
 	Target TargetConfig `yaml:"target"`
-	Poll   PollConfig   `yaml:"poll"`
 }
 
 // SourceConfig describes the upstream Modbus device to read from.
@@ -85,11 +84,12 @@ type SourceConfig struct {
 	DeviceName string  `yaml:"device_name"`
 }
 
-// ReadConfig describes one Modbus read geometry.
+// ReadConfig describes one Modbus read geometry and its independent poll cadence.
 type ReadConfig struct {
-	FC       uint8  `yaml:"fc"`
-	Address  uint16 `yaml:"address"`
-	Quantity uint16 `yaml:"quantity"`
+	FC         uint8  `yaml:"fc"`
+	Address    uint16 `yaml:"address"`
+	Quantity   uint16 `yaml:"quantity"`
+	IntervalMs int    `yaml:"interval_ms"` // how often this read block executes (ms); must be > 0
 }
 
 // TargetConfig describes the in-process store target to write into.
@@ -109,9 +109,4 @@ type TargetConfig struct {
 	// Offsets are per-FC address deltas applied when writing to the store.
 	// Key is the function code (1, 2, 3, 4); missing FC defaults to 0.
 	Offsets map[int]uint16 `yaml:"offsets"`
-}
-
-// PollConfig configures the polling interval.
-type PollConfig struct {
-	IntervalMs int `yaml:"interval_ms"`
 }
