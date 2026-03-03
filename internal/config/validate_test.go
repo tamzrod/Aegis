@@ -7,6 +7,7 @@ import (
 
 func validBaseConfig() *Config {
 	return &Config{
+		AuthorityMode: AuthorityModeStrict,
 		Server: ServerConfig{
 			Listeners: []ListenerConfig{
 				{
@@ -39,6 +40,49 @@ func validBaseConfig() *Config {
 				},
 			},
 		},
+	}
+}
+
+func TestValidateAuthorityModeDefault(t *testing.T) {
+	// When AuthorityMode is empty (as if not set in YAML before Load normalises it),
+	// Validate should reject it. Load() sets the default; raw Config with "" is invalid.
+	cfg := validBaseConfig()
+	cfg.AuthorityMode = ""
+	if err := Validate(cfg); err == nil {
+		t.Error("expected error for empty authority_mode (default is applied by Load, not Validate)")
+	}
+}
+
+func TestValidateAuthorityModeStrictDefault(t *testing.T) {
+	// Load() sets "strict" as default. After Load+normalisation, Validate must accept "strict".
+	cfg := validBaseConfig()
+	cfg.AuthorityMode = AuthorityModeStrict
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected strict to be valid, got: %v", err)
+	}
+}
+
+func TestValidateAuthorityModeStandalone(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.AuthorityMode = AuthorityModeStandalone
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected standalone to be valid, got: %v", err)
+	}
+}
+
+func TestValidateAuthorityModeBuffer(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.AuthorityMode = AuthorityModeBuffer
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected buffer to be valid, got: %v", err)
+	}
+}
+
+func TestValidateAuthorityModeInvalid(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.AuthorityMode = "bogus"
+	if err := Validate(cfg); err == nil {
+		t.Error("expected error for invalid authority_mode value")
 	}
 }
 
@@ -144,6 +188,7 @@ func TestValidateReplicatorInvalidFC(t *testing.T) {
 
 func TestValidateStateSealingValid(t *testing.T) {
 	cfg := &Config{
+		AuthorityMode: AuthorityModeStrict,
 		Server: ServerConfig{
 			Listeners: []ListenerConfig{
 				{
@@ -267,6 +312,7 @@ func TestValidateReplicatorWriteConflict(t *testing.T) {
 func TestValidateReplicatorWriteConflictDifferentUnitIDs(t *testing.T) {
 	// Two units target different unit_ids — no conflict, even with overlapping read addresses.
 	cfg := &Config{
+		AuthorityMode: AuthorityModeStrict,
 		Server: ServerConfig{
 			Listeners: []ListenerConfig{
 				{

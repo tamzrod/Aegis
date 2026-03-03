@@ -1,0 +1,39 @@
+# test/test_authority_default.yaml
+#
+# Authority mode test: DEFAULT (no authority_mode field present).
+# Load() normalises the absent field to "strict".
+# Expected: Validate() succeeds; effective authority_mode = "strict".
+
+server:
+  listeners:
+    - id: "primary"
+      listen: ":502"
+      memory:
+        - unit_id: 1
+          holding_registers:
+            start: 0
+            count: 100
+
+        - unit_id: 255
+          holding_registers:
+            start: 0
+            count: 30
+
+replicator:
+  units:
+    - id: "plc1"
+      source:
+        endpoint: "192.168.1.100:502"
+        unit_id: 1
+        timeout_ms: 1000
+        status_slot: 0
+        device_name: "PLC1"
+      reads:
+        - fc: 3
+          address: 0
+          quantity: 10
+          interval_ms: 1000
+      target:
+        listener_id: "primary"
+        unit_id: 1
+        status_unit_id: 255

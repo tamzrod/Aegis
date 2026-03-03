@@ -17,6 +17,10 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("config is nil")
 	}
 
+	if err := validateAuthorityMode(cfg); err != nil {
+		return err
+	}
+
 	if err := validateServer(cfg); err != nil {
 		return err
 	}
@@ -26,6 +30,19 @@ func Validate(cfg *Config) error {
 	}
 
 	return nil
+}
+
+// --------------------
+// Authority mode validation
+// --------------------
+
+func validateAuthorityMode(cfg *Config) error {
+	switch cfg.AuthorityMode {
+	case AuthorityModeStandalone, AuthorityModeStrict, AuthorityModeBuffer:
+		return nil
+	default:
+		return fmt.Errorf("authority_mode: unknown value %q (valid: standalone, strict, buffer)", cfg.AuthorityMode)
+	}
 }
 
 // --------------------

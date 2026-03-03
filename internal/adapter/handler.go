@@ -13,9 +13,13 @@ import (
 // It reads requests in a loop, dispatches each to the in-process Store,
 // and writes responses back to the client.
 //
+// Authority mode is enforced before dispatch:
+//   - Write FCs (5, 6, 15, 16) are rejected with 0x01 unless mode == "standalone".
+//   - Read FCs (1, 2, 3, 4) are rejected with 0x0B in "strict" mode when health != OK.
+//
 // State sealing is enforced here: if a memory block has a sealing flag coil
 // and its value is 0 (sealed), the server returns Device Busy (0x06) for all requests.
-func HandleConn(conn net.Conn, store core.Store) {
+func HandleConn(conn net.Conn, store core.Store, mode string, health HealthChecker) {
 	defer conn.Close()
 
 	localAddr, ok := conn.LocalAddr().(*net.TCPAddr)
@@ -32,6 +36,12 @@ func HandleConn(conn net.Conn, store core.Store) {
 				log.Printf("adapter: read error: %v", err)
 			}
 			return
+		}
+
+		// Authority mode enforcement: check before state sealing and dispatch.
+		if pdu, rejected := enforceAuthority(mode, req.FunctionCode, port, uint16(req.UnitID), health); rejected {
+			_, _ = conn.Write(BuildResponse(req, pdu))
+			continue
 		}
 
 		mid := core.MemoryID{
@@ -69,3 +79,4 @@ func HandleConn(conn net.Conn, store core.Store) {
 		}
 	}
 }
+
