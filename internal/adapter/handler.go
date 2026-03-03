@@ -10,18 +10,29 @@ import (
 	"github.com/tamzrod/Aegis/internal/core"
 )
 
+// Enforcer is the narrow interface used by HandleConn for per-request authority
+// enforcement.  The concrete implementation lives in authority.go
+// (AuthorityRegistry); using an interface here keeps handler.go decoupled from
+// that implementation.
+type Enforcer interface {
+	// Enforce checks authority for an incoming Modbus request.
+	// Returns (exception PDU, true) if the request must be rejected, or
+	// (nil, false) if it may proceed.
+	Enforce(port, unitID uint16, fc uint8, address, quantity uint16) ([]byte, bool)
+}
+
 // HandleConn handles a single Modbus TCP client connection.
 // It reads requests in a loop, dispatches each to the in-process Store,
 // and writes responses back to the client.
 //
-// Authority is enforced before dispatch using the AuthorityRegistry:
+// Authority is enforced before dispatch using the Enforcer:
 //   - Write FCs (5, 6, 15, 16) are rejected with 0x01 unless mode == A.
 //   - Read FCs (1, 2, 3, 4) are checked against per-block health in mode B.
 //   - Reads not covered by any read block return 0x02.
 //
 // State sealing is enforced here: if a memory block has a sealing flag coil
 // and its value is 0 (sealed), the server returns Device Busy (0x06) for all requests.
-func HandleConn(conn net.Conn, store core.Store, authority *AuthorityRegistry) {
+func HandleConn(conn net.Conn, store core.Store, authority Enforcer) {
 	defer conn.Close()
 
 	localAddr, ok := conn.LocalAddr().(*net.TCPAddr)

@@ -15,11 +15,11 @@ import (
 type Server struct {
 	listen    string
 	store     core.Store
-	authority *AuthorityRegistry
+	authority Enforcer
 }
 
-// NewServer creates a Server for the given listen address, store, and authority registry.
-func NewServer(listen string, store core.Store, authority *AuthorityRegistry) *Server {
+// NewServer creates a Server for the given listen address, store, and authority enforcer.
+func NewServer(listen string, store core.Store, authority Enforcer) *Server {
 	return &Server{listen: listen, store: store, authority: authority}
 }
 
