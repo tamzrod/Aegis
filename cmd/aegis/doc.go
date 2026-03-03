@@ -11,6 +11,10 @@
 //	                  and secTicker).  Enforces the write-change policy: status
 //	                  is written to the store only when the snapshot differs from
 //	                  the previously written value.
+//	                  Couples to engine only through narrow local interfaces:
+//	                    counterSource  — abstracts *engine.Poller (Counters only)
+//	                    pollWriter     — abstracts *engine.StoreWriter
+//	                    blockHealthWriter — abstracts *engine.BlockHealthStore (write side)
 //
 //	health.go       — State mutation
 //	                  Per-read-block health tracking: updateBlockHealth applies
@@ -26,10 +30,13 @@
 //
 //	main.go
 //	  └─► orchestrator.go   (scheduling, policy)
-//	        ├─► health.go   (state mutation)     → engine.BlockHealthStore
-//	        ├─► snapshot.go (data transformation) → engine.StatusSnapshot, engine.TransportCounters
-//	        └─► engine.StoreWriter               → core.Store  (IO)
+//	        ├─► [counterSource]  satisfied by *engine.Poller
+//	        ├─► [pollWriter]     satisfied by *engine.StoreWriter → core.Store  (IO)
+//	        ├─► [blockHealthWriter] satisfied by *engine.BlockHealthStore
+//	        ├─► health.go    (state mutation)
+//	        └─► snapshot.go  (data transformation)
 //
 // Arrows point in the direction of the dependency (A → B means A calls B).
+// Brackets denote local interfaces defined in orchestrator.go.
 // No cycles exist between domain files.
 package main

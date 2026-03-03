@@ -21,18 +21,37 @@ import (
 	"github.com/tamzrod/Aegis/internal/engine"
 )
 
+// counterSource is the subset of *engine.Poller used by the orchestrator.
+// Only transport counters are needed here; the Run loop is started in main.go.
+type counterSource interface {
+	Counters() engine.TransportCounters
+}
+
+// pollWriter is the subset of *engine.StoreWriter used by the orchestrator.
+type pollWriter interface {
+	Write(engine.PollResult) error
+	WriteStatus(engine.StatusSnapshot) error
+}
+
+// blockHealthWriter is the subset of *engine.BlockHealthStore used by the orchestrator.
+// It accepts primitive key components so the orchestrator never constructs
+// engine.BlockHealthKey directly (no internal key-layout leakage).
+type blockHealthWriter interface {
+	SetBlockHealth(unitID string, blockIdx int, h engine.ReadBlockHealth)
+}
+
 // runOrchestrator consumes poll results for one replication unit and coordinates:
 //   - per-block health updates (health.go — state mutation)
 //   - status snapshot updates (snapshot.go — data transformation)
-//   - store writes (engine.StoreWriter — IO)
+//   - store writes (pollWriter — IO)
 //   - SecondsInError increment via secTicker (scheduling)
 //   - write-change policy: WriteStatus is only called when snap actually changed
 func runOrchestrator(
 	ctx context.Context,
 	unitID string,
-	poller *engine.Poller,
-	writer *engine.StoreWriter,
-	healthStore *engine.BlockHealthStore,
+	counters counterSource,
+	writer pollWriter,
+	health blockHealthWriter,
 	ch <-chan engine.PollResult,
 ) {
 	snap := engine.StatusSnapshot{
@@ -61,7 +80,7 @@ func runOrchestrator(
 			// Update per-block health state from poll result (state mutation).
 			for _, upd := range res.BlockUpdates {
 				blockHealth[upd.BlockIdx] = updateBlockHealth(blockHealth[upd.BlockIdx], upd, res.At)
-				healthStore.Set(engine.BlockHealthKey{UnitID: unitID, BlockIdx: upd.BlockIdx}, blockHealth[upd.BlockIdx])
+				health.SetBlockHealth(unitID, upd.BlockIdx, blockHealth[upd.BlockIdx])
 			}
 
 			// Apply poll result and transport counters to the status snapshot
@@ -69,7 +88,7 @@ func runOrchestrator(
 			// (policy enforcement).
 			var c1, c2 bool
 			snap, c1 = applyPollResult(snap, res)
-			snap, c2 = applyCounters(snap, poller.Counters())
+			snap, c2 = applyCounters(snap, counters.Counters())
 			if c1 || c2 {
 				if err := writer.WriteStatus(snap); err != nil {
 					log.Printf("aegis: status write error (unit=%s): %v", unitID, err)
