@@ -10,8 +10,9 @@ import (
 )
 
 // Load reads a YAML configuration file from path and returns the parsed Config.
-// This function applies defaults (e.g. authority_mode defaults to "strict") and
-// normalises field values (e.g. authority_mode is lowercased) after YAML parsing.
+// This function applies defaults (e.g. authority_mode defaults to "buffer") and
+// normalises field values (e.g. authority_mode is lowercased, short aliases
+// "a"/"b"/"c" are expanded to "standalone"/"buffer"/"strict") after YAML parsing.
 // Structural validation is performed by Validate().
 // If loading fails, the process should exit immediately.
 func Load(path string) (*Config, error) {
@@ -25,10 +26,17 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config yaml: %w", err)
 	}
 
-	// Normalise authority_mode to lowercase; apply default if not specified.
+	// Normalise authority_mode to lowercase; expand short aliases; apply default if not specified.
 	cfg.AuthorityMode = strings.ToLower(strings.TrimSpace(cfg.AuthorityMode))
-	if cfg.AuthorityMode == "" {
+	switch cfg.AuthorityMode {
+	case "a":
+		cfg.AuthorityMode = AuthorityModeStandalone
+	case "b":
+		cfg.AuthorityMode = AuthorityModeBuffer
+	case "c":
 		cfg.AuthorityMode = AuthorityModeStrict
+	case "":
+		cfg.AuthorityMode = AuthorityModeBuffer
 	}
 
 	return &cfg, nil

@@ -25,18 +25,18 @@ func (m *mockHealthChecker) IsHealthyFor(_, _ uint16) bool { return m.healthy }
 // Config-level tests
 // --------------------
 
-// TestDefaultAuthorityModeIsStrict verifies that Load() sets the default to "strict"
+// TestDefaultAuthorityModeIsBuffer verifies that Load() sets the default to "buffer"
 // when authority_mode is absent from the YAML.
-func TestDefaultAuthorityModeIsStrict(t *testing.T) {
+func TestDefaultAuthorityModeIsBuffer(t *testing.T) {
 	cfg := &config.Config{
 		AuthorityMode: "", // simulates absent field before Load normalises
 	}
 	// Load applies the default; reproduce that logic here for a unit-level check.
 	if cfg.AuthorityMode == "" {
-		cfg.AuthorityMode = config.AuthorityModeStrict
+		cfg.AuthorityMode = config.AuthorityModeBuffer
 	}
-	if cfg.AuthorityMode != config.AuthorityModeStrict {
-		t.Errorf("expected default authority_mode = %q, got %q", config.AuthorityModeStrict, cfg.AuthorityMode)
+	if cfg.AuthorityMode != config.AuthorityModeBuffer {
+		t.Errorf("expected default authority_mode = %q, got %q", config.AuthorityModeBuffer, cfg.AuthorityMode)
 	}
 }
 

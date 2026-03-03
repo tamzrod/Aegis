@@ -41,7 +41,7 @@ func validateAuthorityMode(cfg *Config) error {
 	case AuthorityModeStandalone, AuthorityModeStrict, AuthorityModeBuffer:
 		return nil
 	default:
-		return fmt.Errorf("authority_mode: unknown value %q (valid: standalone, strict, buffer)", cfg.AuthorityMode)
+		return fmt.Errorf("authority_mode: unknown value %q (valid: standalone, buffer, strict, or short aliases a, b, c)", cfg.AuthorityMode)
 	}
 }
 

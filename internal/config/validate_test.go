@@ -53,12 +53,12 @@ func TestValidateAuthorityModeDefault(t *testing.T) {
 	}
 }
 
-func TestValidateAuthorityModeStrictDefault(t *testing.T) {
-	// Load() sets "strict" as default. After Load+normalisation, Validate must accept "strict".
+func TestValidateAuthorityModeBufferDefault(t *testing.T) {
+	// Load() sets "buffer" as default. After Load+normalisation, Validate must accept "buffer".
 	cfg := validBaseConfig()
-	cfg.AuthorityMode = AuthorityModeStrict
+	cfg.AuthorityMode = AuthorityModeBuffer
 	if err := Validate(cfg); err != nil {
-		t.Errorf("expected strict to be valid, got: %v", err)
+		t.Errorf("expected buffer to be valid, got: %v", err)
 	}
 }
 

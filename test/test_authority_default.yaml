@@ -1,8 +1,8 @@
 # test/test_authority_default.yaml
 #
 # Authority mode test: DEFAULT (no authority_mode field present).
-# Load() normalises the absent field to "strict".
-# Expected: Validate() succeeds; effective authority_mode = "strict".
+# Load() normalises the absent field to "buffer".
+# Expected: Validate() succeeds; effective authority_mode = "buffer".
 
 server:
   listeners:

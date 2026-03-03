@@ -5,6 +5,13 @@
 # Configuration is loaded once at startup. Invalid config causes immediate exit.
 # No hot reload in this version.
 
+# Authority mode controls how the server handles client reads and writes.
+# Valid values (descriptive names or single-letter aliases):
+#   a / standalone  — allows client writes; reads always served regardless of upstream health
+#   b / buffer      — rejects client writes (0x01); reads always served (DEFAULT)
+#   c / strict      — rejects client writes (0x01); reads blocked (0x0B) when upstream is unhealthy
+authority_mode: "b"
+
 server:
   listeners:
     - id: "primary"

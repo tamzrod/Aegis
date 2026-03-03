@@ -5,16 +5,18 @@ package config
 const (
 	// AuthorityModeStandalone allows client writes and always serves memory reads.
 	// Health state does not gate reads. Engine may overwrite values on successful poll.
+	// Short alias: "a".
 	AuthorityModeStandalone = "standalone"
 
-	// AuthorityModeStrict is the default authority mode.
-	// Client writes are rejected (Modbus exception 0x01).
-	// Reads are blocked with exception 0x0B when upstream health is not OK.
-	AuthorityModeStrict = "strict"
-
 	// AuthorityModeBuffer rejects client writes (0x01) but always serves memory reads.
-	// Health state does not block reads.
+	// Health state does not block reads. This is the default authority mode.
+	// Short alias: "b".
 	AuthorityModeBuffer = "buffer"
+
+	// AuthorityModeStrict rejects client writes (Modbus exception 0x01).
+	// Reads are blocked with exception 0x0B when upstream health is not OK.
+	// Short alias: "c".
+	AuthorityModeStrict = "strict"
 )
 
 // Config is the root configuration for Aegis.
