@@ -13,16 +13,14 @@ import (
 // The server reads and writes the shared in-process Store.
 // It is a pure transport adapter: no logic, no state, no interpretation.
 type Server struct {
-	listen string
-	store  core.Store
-	mode   string
-	health HealthChecker
+	listen    string
+	store     core.Store
+	authority *AuthorityRegistry
 }
 
-// NewServer creates a Server for the given listen address, store, authority mode,
-// and health checker.
-func NewServer(listen string, store core.Store, mode string, health HealthChecker) *Server {
-	return &Server{listen: listen, store: store, mode: mode, health: health}
+// NewServer creates a Server for the given listen address, store, and authority registry.
+func NewServer(listen string, store core.Store, authority *AuthorityRegistry) *Server {
+	return &Server{listen: listen, store: store, authority: authority}
 }
 
 // ListenAndServe starts accepting Modbus TCP connections.
@@ -42,7 +40,6 @@ func (s *Server) ListenAndServe() error {
 		if err != nil {
 			return err
 		}
-		go HandleConn(conn, s.store, s.mode, s.health)
+		go HandleConn(conn, s.store, s.authority)
 	}
 }
-

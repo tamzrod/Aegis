@@ -1,30 +1,26 @@
 // internal/config/config.go
 package config
 
-// Authority mode constants.
+// Per-target authority mode constants.
+// Authority is defined per replicator target, not globally.
 const (
-	// AuthorityModeStandalone allows client writes and always serves memory reads.
-	// Health state does not gate reads. Engine may overwrite values on successful poll.
-	AuthorityModeStandalone = "standalone"
+	// TargetModeA (Standalone) allows client writes and always serves reads.
+	// Health state does not gate reads.
+	TargetModeA = "A"
 
-	// AuthorityModeStrict is the default authority mode.
-	// Client writes are rejected (Modbus exception 0x01).
-	// Reads are blocked with exception 0x0B when upstream health is not OK.
-	AuthorityModeStrict = "strict"
+	// TargetModeB (Strict) is the default target authority mode.
+	// Client writes are rejected (0x01). Reads are blocked with 0x0B on timeout,
+	// or forwarded with the upstream exception code if one was recorded.
+	TargetModeB = "B"
 
-	// AuthorityModeBuffer rejects client writes (0x01) but always serves memory reads.
-	// Health state does not block reads.
-	AuthorityModeBuffer = "buffer"
+	// TargetModeC (Buffered) rejects client writes (0x01) but always serves reads.
+	// Health state is exposed in the status block only; reads are never gated.
+	TargetModeC = "C"
 )
 
 // Config is the root configuration for Aegis.
 // It is loaded once at startup and never modified at runtime.
 type Config struct {
-	// AuthorityMode controls how the server handles client reads and writes.
-	// Valid values: "standalone", "strict", "buffer".
-	// Defaults to "strict" if not specified.
-	AuthorityMode string `yaml:"authority_mode"`
-
 	// Server declares one or more Modbus TCP listener gates and their memory layouts.
 	Server ServerConfig `yaml:"server"`
 
@@ -130,4 +126,9 @@ type TargetConfig struct {
 	// Offsets are per-FC address deltas applied when writing to the store.
 	// Key is the function code (1, 2, 3, 4); missing FC defaults to 0.
 	Offsets map[int]uint16 `yaml:"offsets"`
+
+	// Mode controls how the server handles client reads and writes for this target.
+	// Valid values: "A" (standalone), "B" (strict, default), "C" (buffered).
+	// Authority is per target memory surface; there is no global authority mode.
+	Mode string `yaml:"mode"`
 }

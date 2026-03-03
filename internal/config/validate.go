@@ -17,10 +17,6 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("config is nil")
 	}
 
-	if err := validateAuthorityMode(cfg); err != nil {
-		return err
-	}
-
 	if err := validateServer(cfg); err != nil {
 		return err
 	}
@@ -30,19 +26,6 @@ func Validate(cfg *Config) error {
 	}
 
 	return nil
-}
-
-// --------------------
-// Authority mode validation
-// --------------------
-
-func validateAuthorityMode(cfg *Config) error {
-	switch cfg.AuthorityMode {
-	case AuthorityModeStandalone, AuthorityModeStrict, AuthorityModeBuffer:
-		return nil
-	default:
-		return fmt.Errorf("authority_mode: unknown value %q (valid: standalone, strict, buffer)", cfg.AuthorityMode)
-	}
 }
 
 // --------------------
@@ -305,6 +288,14 @@ func validateUnitConfig(u UnitConfig, listenerPort map[string]uint16) error {
 		if *t.StatusUnitID > 0xFF {
 			return fmt.Errorf("target.status_unit_id must be <= 255")
 		}
+	}
+
+	// Target mode validation
+	switch t.Mode {
+	case TargetModeA, TargetModeB, TargetModeC:
+		// valid
+	default:
+		return fmt.Errorf("target.mode: unknown value %q (valid: A, B, C)", t.Mode)
 	}
 
 	return nil

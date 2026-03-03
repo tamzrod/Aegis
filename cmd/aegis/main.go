@@ -46,6 +46,11 @@ func main() {
 	log.Printf("aegis: memory store initialized (%d listeners)", len(cfg.Server.Listeners))
 
 	// --------------------
+	// Build per-block health store
+	// --------------------
+	healthStore := engine.NewBlockHealthStore()
+
+	// --------------------
 	// Build replication engine units
 	// --------------------
 	units, err := engine.Build(cfg, store)
@@ -59,11 +64,11 @@ func main() {
 	defer cancel()
 
 	// --------------------
-	// Start Modbus TCP server adapters (one goroutine per listener)
+	// Build authority registry and start Modbus TCP server adapters
 	// --------------------
-	hc := adapter.BuildHealthChecker(cfg, store)
+	authority := adapter.BuildAuthorityRegistry(cfg, healthStore)
 	for _, l := range cfg.Server.Listeners {
-		srv := adapter.NewServer(l.Listen, store, cfg.AuthorityMode, hc)
+		srv := adapter.NewServer(l.Listen, store, authority)
 		go func(id, listen string, s *adapter.Server) {
 			if err := s.ListenAndServe(); err != nil {
 				log.Fatalf("aegis: adapter %s (%s) failed: %v", id, listen, err)
@@ -80,12 +85,16 @@ func main() {
 		out := make(chan engine.PollResult, 8)
 		w := u.Writer
 		p := u.Poller
+		unitID := p.UnitID()
 
-		// Orchestrator: consume poll results, write data and status
+		// Orchestrator: consume poll results, write data, update per-block health and status
 		go func(unitID string, poller *engine.Poller, writer *engine.StoreWriter, ch <-chan engine.PollResult) {
 			snap := engine.StatusSnapshot{
 				Health: engine.HealthUnknown,
 			}
+
+			// Per-block health state (indexed by block index)
+			blockHealth := make(map[int]engine.ReadBlockHealth)
 
 			secTicker := time.NewTicker(time.Second)
 			defer secTicker.Stop()
@@ -101,6 +110,29 @@ func main() {
 				case res := <-ch:
 					if err := writer.Write(res); err != nil {
 						log.Printf("aegis: write error (unit=%s): %v", unitID, err)
+					}
+
+					// Update per-block health state from poll result.
+					for _, upd := range res.BlockUpdates {
+						h := blockHealth[upd.BlockIdx]
+						if upd.Success {
+							h.Timeout = false
+							h.ConsecutiveErrors = 0
+							h.LastExceptionCode = 0
+							h.LastSuccess = res.At
+						} else {
+							h.ConsecutiveErrors++
+							h.LastError = res.At
+							if upd.Timeout {
+								h.Timeout = true
+								h.LastExceptionCode = 0
+							} else {
+								h.Timeout = false
+								h.LastExceptionCode = upd.ExceptionCode
+							}
+						}
+						blockHealth[upd.BlockIdx] = h
+						healthStore.Set(engine.BlockHealthKey{UnitID: unitID, BlockIdx: upd.BlockIdx}, h)
 					}
 
 					changed := false
@@ -172,7 +204,7 @@ func main() {
 					}
 				}
 			}
-		}(p.UnitID(), p, w, out)
+		}(unitID, p, w, out)
 
 		go p.Run(ctx, out)
 	}

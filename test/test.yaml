@@ -43,3 +43,4 @@ replicator:
         listener_id: "primary"
         unit_id: 1
         status_unit_id: 255
+        mode: "B"

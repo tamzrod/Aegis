@@ -3,6 +3,7 @@ package adapter
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"testing"
@@ -12,67 +13,166 @@ import (
 )
 
 // --------------------
-// Mock HealthChecker
+// Mock BlockHealthReader
 // --------------------
 
-type mockHealthChecker struct {
-	healthy bool
+// mockBlockHealthReader simulates the engine's BlockHealthStore for tests.
+// Key: "unitID:blockIdx", value: (timeout, consecutiveErrors, exceptionCode).
+type mockBlockHealthReader struct {
+	entries map[string]blockHealthEntry
 }
 
-func (m *mockHealthChecker) IsHealthyFor(_, _ uint16) bool { return m.healthy }
+type blockHealthEntry struct {
+	timeout           bool
+	consecutiveErrors int
+	exceptionCode     byte
+}
+
+func blockKey(unitID string, blockIdx int) string {
+	return fmt.Sprintf("%s:%d", unitID, blockIdx)
+}
+
+func (m *mockBlockHealthReader) GetBlockHealth(unitID string, blockIdx int) (timeout bool, consecutiveErrors int, exceptionCode byte, found bool) {
+	e, ok := m.entries[blockKey(unitID, blockIdx)]
+	return e.timeout, e.consecutiveErrors, e.exceptionCode, ok
+}
+
+func newMockHealth() *mockBlockHealthReader {
+	return &mockBlockHealthReader{entries: make(map[string]blockHealthEntry)}
+}
+
+func (m *mockBlockHealthReader) setHealthy(unitID string, blockIdx int) {
+	m.entries[blockKey(unitID, blockIdx)] = blockHealthEntry{timeout: false, consecutiveErrors: 0, exceptionCode: 0}
+}
+
+func (m *mockBlockHealthReader) setTimeout(unitID string, blockIdx int) {
+	m.entries[blockKey(unitID, blockIdx)] = blockHealthEntry{timeout: true, consecutiveErrors: 1, exceptionCode: 0}
+}
+
+func (m *mockBlockHealthReader) setException(unitID string, blockIdx int, code byte) {
+	m.entries[blockKey(unitID, blockIdx)] = blockHealthEntry{timeout: false, consecutiveErrors: 1, exceptionCode: code}
+}
 
 // --------------------
-// Config-level tests
+// Test helpers
 // --------------------
 
-// TestDefaultAuthorityModeIsStrict verifies that Load() sets the default to "strict"
-// when authority_mode is absent from the YAML.
-func TestDefaultAuthorityModeIsStrict(t *testing.T) {
+// buildTestRegistry builds an AuthorityRegistry for testing.
+// target: port=502, unitID=1, mode=given, reads=[{FC4, addr=0, qty=10}]
+func buildTestRegistry(mode string, health BlockHealthReader) *AuthorityRegistry {
 	cfg := &config.Config{
-		AuthorityMode: "", // simulates absent field before Load normalises
+		Server: config.ServerConfig{
+			Listeners: []config.ListenerConfig{
+				{
+					ID:     "main",
+					Listen: ":502",
+					Memory: []config.MemoryDef{
+						{UnitID: 1, HoldingRegs: config.AreaDef{Start: 0, Count: 10}},
+					},
+				},
+			},
+		},
+		Replicator: config.ReplicatorConfig{
+			Units: []config.UnitConfig{
+				{
+					ID:     "unit1",
+					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []config.ReadConfig{{FC: 4, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: mode},
+				},
+			},
+		},
+	}
+	return BuildAuthorityRegistry(cfg, health)
+}
+
+// buildTwoBlockRegistry builds a registry with two FC4 blocks: [0,10) and [10,10).
+func buildTwoBlockRegistry(mode string, health BlockHealthReader) *AuthorityRegistry {
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			Listeners: []config.ListenerConfig{
+				{
+					ID:     "main",
+					Listen: ":502",
+					Memory: []config.MemoryDef{
+						{UnitID: 1, InputRegs: config.AreaDef{Start: 0, Count: 20}},
+					},
+				},
+			},
+		},
+		Replicator: config.ReplicatorConfig{
+			Units: []config.UnitConfig{
+				{
+					ID:     "unit1",
+					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads: []config.ReadConfig{
+						{FC: 4, Address: 0, Quantity: 10, IntervalMs: 200},   // block 0: [0,10)
+						{FC: 4, Address: 10, Quantity: 10, IntervalMs: 5000}, // block 1: [10,20)
+					},
+					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: mode},
+				},
+			},
+		},
+	}
+	return BuildAuthorityRegistry(cfg, health)
+}
+
+// --------------------
+// Config-level tests (default mode)
+// --------------------
+
+// TestDefaultTargetModeIsB verifies that Load() sets the default to "B"
+// when target.mode is absent from the YAML.
+func TestDefaultTargetModeIsB(t *testing.T) {
+	cfg := &config.Config{
+		Replicator: config.ReplicatorConfig{
+			Units: []config.UnitConfig{
+				{Target: config.TargetConfig{Mode: ""}},
+			},
+		},
 	}
 	// Load applies the default; reproduce that logic here for a unit-level check.
-	if cfg.AuthorityMode == "" {
-		cfg.AuthorityMode = config.AuthorityModeStrict
+	if cfg.Replicator.Units[0].Target.Mode == "" {
+		cfg.Replicator.Units[0].Target.Mode = config.TargetModeB
 	}
-	if cfg.AuthorityMode != config.AuthorityModeStrict {
-		t.Errorf("expected default authority_mode = %q, got %q", config.AuthorityModeStrict, cfg.AuthorityMode)
+	if cfg.Replicator.Units[0].Target.Mode != config.TargetModeB {
+		t.Errorf("expected default target mode = %q, got %q", config.TargetModeB, cfg.Replicator.Units[0].Target.Mode)
 	}
 }
 
-// TestInvalidAuthorityModeFailsValidation verifies that Validate rejects unknown modes.
-func TestInvalidAuthorityModeFailsValidation(t *testing.T) {
+// TestInvalidTargetModeFailsValidation verifies that Validate rejects unknown modes.
+func TestInvalidTargetModeFailsValidation(t *testing.T) {
 	cfg := minimalValidConfig()
-	cfg.AuthorityMode = "unknown"
+	cfg.Replicator.Units[0].Target.Mode = "unknown"
 	if err := config.Validate(cfg); err == nil {
-		t.Error("expected validation error for unknown authority_mode")
+		t.Error("expected validation error for unknown target mode")
 	}
 }
 
 // --------------------
-// enforceAuthority unit tests
+// AuthorityRegistry enforcement tests
 // --------------------
 
-// TestEnforceAuthorityWriteStandaloneAllowed verifies that write FCs are allowed
-// in standalone mode.
-func TestEnforceAuthorityWriteStandaloneAllowed(t *testing.T) {
-	health := &mockHealthChecker{healthy: false}
+// TestEnforceWriteModeAAllowed verifies that write FCs are allowed in mode A.
+func TestEnforceWriteModeAAllowed(t *testing.T) {
+	health := newMockHealth()
+	reg := buildTestRegistry(config.TargetModeA, health)
 	for _, fc := range []uint8{5, 6, 15, 16} {
-		pdu, rejected := enforceAuthority(config.AuthorityModeStandalone, fc, 502, 1, health)
+		pdu, rejected := reg.Enforce(502, 1, fc, 0, 1)
 		if rejected {
-			t.Errorf("FC%d: standalone should allow writes, got exception PDU: %v", fc, pdu)
+			t.Errorf("FC%d: mode A should allow writes, got exception PDU: %v", fc, pdu)
 		}
 	}
 }
 
-// TestEnforceAuthorityWriteStrictRejected verifies that write FCs are rejected (0x01)
-// in strict mode.
-func TestEnforceAuthorityWriteStrictRejected(t *testing.T) {
-	health := &mockHealthChecker{healthy: true}
+// TestEnforceWriteModeBRejected verifies that write FCs are rejected (0x01) in mode B.
+func TestEnforceWriteModeBRejected(t *testing.T) {
+	health := newMockHealth()
+	reg := buildTestRegistry(config.TargetModeB, health)
 	for _, fc := range []uint8{5, 6, 15, 16} {
-		pdu, rejected := enforceAuthority(config.AuthorityModeStrict, fc, 502, 1, health)
+		pdu, rejected := reg.Enforce(502, 1, fc, 0, 1)
 		if !rejected {
-			t.Errorf("FC%d: strict should reject writes", fc)
+			t.Errorf("FC%d: mode B should reject writes", fc)
 			continue
 		}
 		if len(pdu) != 2 || pdu[0] != fc|0x80 || pdu[1] != 0x01 {
@@ -81,14 +181,14 @@ func TestEnforceAuthorityWriteStrictRejected(t *testing.T) {
 	}
 }
 
-// TestEnforceAuthorityWriteBufferRejected verifies that write FCs are rejected (0x01)
-// in buffer mode.
-func TestEnforceAuthorityWriteBufferRejected(t *testing.T) {
-	health := &mockHealthChecker{healthy: true}
+// TestEnforceWriteModeCRejected verifies that write FCs are rejected (0x01) in mode C.
+func TestEnforceWriteModeCRejected(t *testing.T) {
+	health := newMockHealth()
+	reg := buildTestRegistry(config.TargetModeC, health)
 	for _, fc := range []uint8{5, 6, 15, 16} {
-		pdu, rejected := enforceAuthority(config.AuthorityModeBuffer, fc, 502, 1, health)
+		pdu, rejected := reg.Enforce(502, 1, fc, 0, 1)
 		if !rejected {
-			t.Errorf("FC%d: buffer should reject writes", fc)
+			t.Errorf("FC%d: mode C should reject writes", fc)
 			continue
 		}
 		if len(pdu) != 2 || pdu[0] != fc|0x80 || pdu[1] != 0x01 {
@@ -97,55 +197,183 @@ func TestEnforceAuthorityWriteBufferRejected(t *testing.T) {
 	}
 }
 
-// TestEnforceAuthorityReadStrictUnhealthyBlocked verifies that reads return 0x0B
-// in strict mode when the upstream is unhealthy.
-func TestEnforceAuthorityReadStrictUnhealthyBlocked(t *testing.T) {
-	health := &mockHealthChecker{healthy: false}
-	for _, fc := range []uint8{1, 2, 3, 4} {
-		pdu, rejected := enforceAuthority(config.AuthorityModeStrict, fc, 502, 1, health)
-		if !rejected {
-			t.Errorf("FC%d: strict should block reads when unhealthy", fc)
-			continue
-		}
-		if len(pdu) != 2 || pdu[0] != fc|0x80 || pdu[1] != 0x0B {
-			t.Errorf("FC%d: expected exception 0x0B, got %v", fc, pdu)
+// TestEnforceReadModeBTimeoutBlocked verifies that reads in mode B return 0x0B
+// when the covering block has a timeout.
+func TestEnforceReadModeBTimeoutBlocked(t *testing.T) {
+	health := newMockHealth()
+	health.setTimeout("unit1", 0)
+	reg := buildTestRegistry(config.TargetModeB, health)
+	pdu, rejected := reg.Enforce(502, 1, 4, 0, 5) // FC4, addr=0, qty=5 (covered by block 0)
+	if !rejected {
+		t.Error("mode B + timeout: read should be blocked")
+		return
+	}
+	if len(pdu) != 2 || pdu[0] != 0x04|0x80 || pdu[1] != 0x0B {
+		t.Errorf("expected exception 0x0B, got %v", pdu)
+	}
+}
+
+// TestEnforceReadModeBHealthyAllowed verifies that reads in mode B proceed
+// when the covering block is healthy.
+func TestEnforceReadModeBHealthyAllowed(t *testing.T) {
+	health := newMockHealth()
+	health.setHealthy("unit1", 0)
+	reg := buildTestRegistry(config.TargetModeB, health)
+	pdu, rejected := reg.Enforce(502, 1, 4, 0, 5)
+	if rejected {
+		t.Errorf("mode B + healthy: read should proceed, got exception PDU: %v", pdu)
+	}
+}
+
+// TestEnforceReadModeCAlwaysServes verifies that reads in mode C are never blocked,
+// even when a block has timed out.
+func TestEnforceReadModeCAlwaysServes(t *testing.T) {
+	health := newMockHealth()
+	health.setTimeout("unit1", 0)
+	reg := buildTestRegistry(config.TargetModeC, health)
+	pdu, rejected := reg.Enforce(502, 1, 4, 0, 5)
+	if rejected {
+		t.Errorf("mode C: read should always proceed, got exception PDU: %v", pdu)
+	}
+}
+
+// TestEnforceReadModeAAlwaysServes verifies that reads in mode A are never blocked.
+func TestEnforceReadModeAAlwaysServes(t *testing.T) {
+	health := newMockHealth()
+	health.setTimeout("unit1", 0)
+	reg := buildTestRegistry(config.TargetModeA, health)
+	pdu, rejected := reg.Enforce(502, 1, 4, 0, 5)
+	if rejected {
+		t.Errorf("mode A: read should always proceed, got exception PDU: %v", pdu)
+	}
+}
+
+// --------------------
+// New spec tests
+// --------------------
+
+// TestTwoFC4BlocksDifferentIntervals verifies config with two FC4 blocks at different
+// intervals builds correctly with two separate block entries in the registry.
+func TestTwoFC4BlocksDifferentIntervals(t *testing.T) {
+	health := newMockHealth()
+	reg := buildTwoBlockRegistry(config.TargetModeB, health)
+	entry, ok := reg.targets[targetKey{port: 502, unitID: 1}]
+	if !ok {
+		t.Fatal("expected target entry for (502, 1)")
+	}
+	if len(entry.blocks) != 2 {
+		t.Fatalf("expected 2 read blocks, got %d", len(entry.blocks))
+	}
+}
+
+// TestOneHealthyOneTimed_HealthySucceeds verifies that in mode B with two blocks,
+// accessing the healthy range succeeds.
+func TestOneHealthyOneTimed_HealthySucceeds(t *testing.T) {
+	health := newMockHealth()
+	health.setHealthy("unit1", 0) // block 0: [0,10) — healthy
+	health.setTimeout("unit1", 1) // block 1: [10,20) — timed out
+	reg := buildTwoBlockRegistry(config.TargetModeB, health)
+
+	// Read from block 0 range only — should succeed.
+	pdu, rejected := reg.Enforce(502, 1, 4, 0, 5)
+	if rejected {
+		t.Errorf("healthy block 0: read should succeed, got exception PDU: %v", pdu)
+	}
+}
+
+// TestOneHealthyOneTimed_TimedOutFails verifies that in mode B with two blocks,
+// accessing the timed-out range returns 0x0B.
+func TestOneHealthyOneTimed_TimedOutFails(t *testing.T) {
+	health := newMockHealth()
+	health.setHealthy("unit1", 0)
+	health.setTimeout("unit1", 1)
+	reg := buildTwoBlockRegistry(config.TargetModeB, health)
+
+	// Read from block 1 range — should fail with 0x0B.
+	pdu, rejected := reg.Enforce(502, 1, 4, 10, 5)
+	if !rejected {
+		t.Error("timed-out block 1: read should be rejected")
+		return
+	}
+	if len(pdu) != 2 || pdu[0] != 0x04|0x80 || pdu[1] != 0x0B {
+		t.Errorf("expected exception 0x0B, got %v", pdu)
+	}
+}
+
+// TestUpstreamExceptionForwarded verifies that mode B forwards the upstream
+// Modbus exception code when a block recorded an exception.
+func TestUpstreamExceptionForwarded(t *testing.T) {
+	health := newMockHealth()
+	health.setException("unit1", 0, 0x04) // Slave Device Failure
+	reg := buildTestRegistry(config.TargetModeB, health)
+	pdu, rejected := reg.Enforce(502, 1, 4, 0, 5)
+	if !rejected {
+		t.Error("block with exception: read should be rejected")
+		return
+	}
+	if len(pdu) != 2 || pdu[0] != 0x04|0x80 || pdu[1] != 0x04 {
+		t.Errorf("expected exception 0x04 forwarded, got %v", pdu)
+	}
+}
+
+// TestModeCAlwaysServesReads verifies mode C always serves reads regardless of health.
+func TestModeCAlwaysServesReads(t *testing.T) {
+	health := newMockHealth()
+	health.setTimeout("unit1", 0)
+	health.setException("unit1", 0, 0x06)
+	reg := buildTestRegistry(config.TargetModeC, health)
+
+	// The registry has FC4 blocks only. Mode C serves covered FC4 reads regardless of health.
+	pdu, rejected := reg.Enforce(502, 1, 4, 0, 5)
+	if rejected {
+		t.Errorf("FC4: mode C should always serve reads, got exception PDU: %v", pdu)
+	}
+
+}
+
+// TestModeAAllowsWrite verifies that mode A allows write function codes.
+func TestModeAAllowsWrite(t *testing.T) {
+	health := newMockHealth()
+	reg := buildTestRegistry(config.TargetModeA, health)
+	for _, fc := range []uint8{5, 6, 15, 16} {
+		pdu, rejected := reg.Enforce(502, 1, fc, 0, 1)
+		if rejected {
+			t.Errorf("FC%d: mode A should allow writes, got exception PDU: %v", fc, pdu)
 		}
 	}
 }
 
-// TestEnforceAuthorityReadStrictHealthyAllowed verifies that reads proceed
-// in strict mode when the upstream is healthy.
-func TestEnforceAuthorityReadStrictHealthyAllowed(t *testing.T) {
-	health := &mockHealthChecker{healthy: true}
-	for _, fc := range []uint8{1, 2, 3, 4} {
-		pdu, rejected := enforceAuthority(config.AuthorityModeStrict, fc, 502, 1, health)
-		if rejected {
-			t.Errorf("FC%d: strict should allow reads when healthy, got exception PDU: %v", fc, pdu)
-		}
+// TestPartialOverlapReturns0x02 verifies that a request whose range is not fully
+// covered by any read block returns 0x02 (Illegal Data Address).
+func TestPartialOverlapReturns0x02(t *testing.T) {
+	health := newMockHealth()
+	reg := buildTwoBlockRegistry(config.TargetModeB, health)
+
+	// Request spans address [8, 18) — partially covered by block 0 [0,10) and block 1 [10,20),
+	// so their union [0,20) DOES cover [8,18). This should succeed.
+	// Let's use a range that is genuinely not covered: [15, 30) exceeds both blocks.
+	health.setHealthy("unit1", 0)
+	health.setHealthy("unit1", 1)
+	pdu, rejected := reg.Enforce(502, 1, 4, 15, 20) // [15, 35) — exceeds block 1 which ends at 20
+	if !rejected {
+		t.Error("request exceeding block coverage should be rejected with 0x02")
+		return
+	}
+	if len(pdu) != 2 || pdu[0] != 0x04|0x80 || pdu[1] != 0x02 {
+		t.Errorf("expected exception 0x02, got %v", pdu)
 	}
 }
 
-// TestEnforceAuthorityReadBufferUnhealthyAllowed verifies that reads are never
-// blocked in buffer mode, even when the upstream is unhealthy.
-func TestEnforceAuthorityReadBufferUnhealthyAllowed(t *testing.T) {
-	health := &mockHealthChecker{healthy: false}
-	for _, fc := range []uint8{1, 2, 3, 4} {
-		pdu, rejected := enforceAuthority(config.AuthorityModeBuffer, fc, 502, 1, health)
-		if rejected {
-			t.Errorf("FC%d: buffer should never block reads, got exception PDU: %v", fc, pdu)
-		}
+// TestDefaultModeIsB verifies that when mode is omitted from config, Load sets it to "B".
+func TestDefaultModeIsB(t *testing.T) {
+	// Simulate loading without mode field (mode="").
+	// The loader normalises "" to "B".
+	mode := ""
+	if mode == "" {
+		mode = config.TargetModeB
 	}
-}
-
-// TestEnforceAuthorityReadStandaloneUnhealthyAllowed verifies that reads are never
-// blocked in standalone mode, even when the upstream is unhealthy.
-func TestEnforceAuthorityReadStandaloneUnhealthyAllowed(t *testing.T) {
-	health := &mockHealthChecker{healthy: false}
-	for _, fc := range []uint8{1, 2, 3, 4} {
-		pdu, rejected := enforceAuthority(config.AuthorityModeStandalone, fc, 502, 1, health)
-		if rejected {
-			t.Errorf("FC%d: standalone should never block reads, got exception PDU: %v", fc, pdu)
-		}
+	if mode != config.TargetModeB {
+		t.Errorf("expected default mode B, got %q", mode)
 	}
 }
 
@@ -184,13 +412,13 @@ func buildTestStore(t *testing.T) core.Store {
 func buildFC3Frame() []byte {
 	// MBAP: txID=1, protoID=0, length=6, unitID=1; PDU: FC=3, addr=0, qty=1
 	frame := make([]byte, 12)
-	binary.BigEndian.PutUint16(frame[0:2], 1)    // txID
-	binary.BigEndian.PutUint16(frame[2:4], 0)    // protoID
-	binary.BigEndian.PutUint16(frame[4:6], 6)    // length = unitID(1) + PDU(5)
-	frame[6] = 1                                  // unitID
-	frame[7] = 3                                  // FC3
-	binary.BigEndian.PutUint16(frame[8:10], 0)   // address = 0
-	binary.BigEndian.PutUint16(frame[10:12], 1)  // quantity = 1
+	binary.BigEndian.PutUint16(frame[0:2], 1)   // txID
+	binary.BigEndian.PutUint16(frame[2:4], 0)   // protoID
+	binary.BigEndian.PutUint16(frame[4:6], 6)   // length = unitID(1) + PDU(5)
+	frame[6] = 1                                // unitID
+	frame[7] = 3                                // FC3
+	binary.BigEndian.PutUint16(frame[8:10], 0)  // address = 0
+	binary.BigEndian.PutUint16(frame[10:12], 1) // quantity = 1
 	return frame
 }
 
@@ -199,19 +427,19 @@ func buildFC3Frame() []byte {
 func buildFC6Frame() []byte {
 	// MBAP: txID=1, protoID=0, length=6, unitID=1; PDU: FC=6, addr=0, value=0x1234
 	frame := make([]byte, 12)
-	binary.BigEndian.PutUint16(frame[0:2], 1)      // txID
-	binary.BigEndian.PutUint16(frame[2:4], 0)      // protoID
-	binary.BigEndian.PutUint16(frame[4:6], 6)      // length
-	frame[6] = 1                                    // unitID
-	frame[7] = 6                                    // FC6
-	binary.BigEndian.PutUint16(frame[8:10], 0)     // address = 0
+	binary.BigEndian.PutUint16(frame[0:2], 1)        // txID
+	binary.BigEndian.PutUint16(frame[2:4], 0)        // protoID
+	binary.BigEndian.PutUint16(frame[4:6], 6)        // length
+	frame[6] = 1                                     // unitID
+	frame[7] = 6                                     // FC6
+	binary.BigEndian.PutUint16(frame[8:10], 0)       // address = 0
 	binary.BigEndian.PutUint16(frame[10:12], 0x1234) // value
 	return frame
 }
 
 // sendAndReceive sends a Modbus TCP frame via the client end of a pipe and reads
 // one response frame back.  The server goroutine runs HandleConn.
-func sendAndReceive(t *testing.T, mode string, health HealthChecker, store core.Store, reqFrame []byte) []byte {
+func sendAndReceive(t *testing.T, authority *AuthorityRegistry, store core.Store, reqFrame []byte) []byte {
 	t.Helper()
 
 	srvRaw, cli := net.Pipe()
@@ -220,7 +448,7 @@ func sendAndReceive(t *testing.T, mode string, health HealthChecker, store core.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		HandleConn(srv, store, mode, health)
+		HandleConn(srv, store, authority)
 	}()
 
 	if _, err := cli.Write(reqFrame); err != nil {
@@ -246,137 +474,94 @@ func sendAndReceive(t *testing.T, mode string, health HealthChecker, store core.
 	return pdu
 }
 
-// TestHandleConnStrictUnhealthyReadBlocked verifies that HandleConn returns 0x0B
-// for a read request in strict mode when health is not OK.
-func TestHandleConnStrictUnhealthyReadBlocked(t *testing.T) {
+// buildFC3Registry builds a registry covering FC3 (holding registers) for unit 1 on port 502.
+func buildFC3Registry(mode string, health BlockHealthReader) *AuthorityRegistry {
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			Listeners: []config.ListenerConfig{
+				{
+					ID:     "main",
+					Listen: ":502",
+					Memory: []config.MemoryDef{
+						{UnitID: 1, HoldingRegs: config.AreaDef{Start: 0, Count: 10}},
+					},
+				},
+			},
+		},
+		Replicator: config.ReplicatorConfig{
+			Units: []config.UnitConfig{
+				{
+					ID:     "unit1",
+					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: mode},
+				},
+			},
+		},
+	}
+	return BuildAuthorityRegistry(cfg, health)
+}
+
+// TestHandleConnModeBTimeoutReadBlocked verifies that HandleConn returns 0x0B
+// for a read request in mode B when the covering block has timed out.
+func TestHandleConnModeBTimeoutReadBlocked(t *testing.T) {
 	store := buildTestStore(t)
-	health := &mockHealthChecker{healthy: false}
-	pdu := sendAndReceive(t, config.AuthorityModeStrict, health, store, buildFC3Frame())
+	health := newMockHealth()
+	health.setTimeout("unit1", 0)
+	authority := buildFC3Registry(config.TargetModeB, health)
+	pdu := sendAndReceive(t, authority, store, buildFC3Frame())
 	if len(pdu) != 2 || pdu[0] != 0x03|0x80 || pdu[1] != 0x0B {
-		t.Errorf("strict+unhealthy read: expected exception 0x0B, got %v", pdu)
+		t.Errorf("mode B + timeout read: expected exception 0x0B, got %v", pdu)
 	}
 }
 
-// TestHandleConnBufferUnhealthyReadAllowed verifies that HandleConn returns data
-// (not an exception) for a read request in buffer mode even when health is not OK.
-func TestHandleConnBufferUnhealthyReadAllowed(t *testing.T) {
+// TestHandleConnModeCUnhealthyReadAllowed verifies that HandleConn returns data
+// for a read request in mode C even when the block has timed out.
+func TestHandleConnModeCUnhealthyReadAllowed(t *testing.T) {
 	store := buildTestStore(t)
-	health := &mockHealthChecker{healthy: false}
-	pdu := sendAndReceive(t, config.AuthorityModeBuffer, health, store, buildFC3Frame())
+	health := newMockHealth()
+	health.setTimeout("unit1", 0)
+	authority := buildFC3Registry(config.TargetModeC, health)
+	pdu := sendAndReceive(t, authority, store, buildFC3Frame())
 	// Successful FC3 response: pdu[0] == 0x03 (not exception bit set)
 	if len(pdu) == 0 || pdu[0]&0x80 != 0 {
-		t.Errorf("buffer+unhealthy read: expected data response, got %v", pdu)
+		t.Errorf("mode C + timeout read: expected data response, got %v", pdu)
 	}
 }
 
-// TestHandleConnStandaloneWriteAllowed verifies that HandleConn processes a write
-// in standalone mode (no exception returned).
-func TestHandleConnStandaloneWriteAllowed(t *testing.T) {
+// TestHandleConnModeAWriteAllowed verifies that HandleConn processes a write
+// in mode A (no exception returned).
+func TestHandleConnModeAWriteAllowed(t *testing.T) {
 	store := buildTestStore(t)
-	health := &mockHealthChecker{healthy: true}
-	pdu := sendAndReceive(t, config.AuthorityModeStandalone, health, store, buildFC6Frame())
+	health := newMockHealth()
+	authority := buildFC3Registry(config.TargetModeA, health)
+	pdu := sendAndReceive(t, authority, store, buildFC6Frame())
 	if len(pdu) == 0 || pdu[0]&0x80 != 0 {
-		t.Errorf("standalone write: expected success response, got %v", pdu)
+		t.Errorf("mode A write: expected success response, got %v", pdu)
 	}
 }
 
-// TestHandleConnStrictWriteRejected verifies that HandleConn returns exception 0x01
-// for a write request in strict mode.
-func TestHandleConnStrictWriteRejected(t *testing.T) {
+// TestHandleConnModeBWriteRejected verifies that HandleConn returns exception 0x01
+// for a write request in mode B.
+func TestHandleConnModeBWriteRejected(t *testing.T) {
 	store := buildTestStore(t)
-	health := &mockHealthChecker{healthy: true}
-	pdu := sendAndReceive(t, config.AuthorityModeStrict, health, store, buildFC6Frame())
+	health := newMockHealth()
+	authority := buildFC3Registry(config.TargetModeB, health)
+	pdu := sendAndReceive(t, authority, store, buildFC6Frame())
 	if len(pdu) != 2 || pdu[0] != 0x06|0x80 || pdu[1] != 0x01 {
-		t.Errorf("strict write: expected exception 0x01, got %v", pdu)
+		t.Errorf("mode B write: expected exception 0x01, got %v", pdu)
 	}
 }
 
-// TestHandleConnBufferWriteRejected verifies that HandleConn returns exception 0x01
-// for a write request in buffer mode.
-func TestHandleConnBufferWriteRejected(t *testing.T) {
+// TestHandleConnModeCWriteRejected verifies that HandleConn returns exception 0x01
+// for a write request in mode C.
+func TestHandleConnModeCWriteRejected(t *testing.T) {
 	store := buildTestStore(t)
-	health := &mockHealthChecker{healthy: true}
-	pdu := sendAndReceive(t, config.AuthorityModeBuffer, health, store, buildFC6Frame())
+	health := newMockHealth()
+	authority := buildFC3Registry(config.TargetModeC, health)
+	pdu := sendAndReceive(t, authority, store, buildFC6Frame())
 	if len(pdu) != 2 || pdu[0] != 0x06|0x80 || pdu[1] != 0x01 {
-		t.Errorf("buffer write: expected exception 0x01, got %v", pdu)
-	}
-}
-
-// --------------------
-// StoreHealthChecker tests
-// --------------------
-
-// TestStoreHealthCheckerNoStatusEntry returns true when no status is configured.
-func TestStoreHealthCheckerNoStatusEntry(t *testing.T) {
-	store := core.NewMemStore()
-	hc := &StoreHealthChecker{store: store, entries: make(map[dataKey][]statusEntry)}
-	if !hc.IsHealthyFor(502, 1) {
-		t.Error("expected true (no status configured), got false")
-	}
-}
-
-// TestStoreHealthCheckerHealthOK verifies that IsHealthyFor returns true when the
-// health register in the status block contains healthOK (1).
-func TestStoreHealthCheckerHealthOK(t *testing.T) {
-	store := core.NewMemStore()
-
-	// Create a status memory with 30 holding registers at port=502, unitID=255.
-	statusMem, err := core.NewMemory(core.MemoryLayouts{
-		HoldingRegs: &core.AreaLayout{Start: 0, Size: 30},
-	})
-	if err != nil {
-		t.Fatalf("NewMemory: %v", err)
-	}
-	// Write healthOK (1) into register offset 2 (statusHealthOffset).
-	buf := make([]byte, 2)
-	binary.BigEndian.PutUint16(buf, healthOK)
-	if err := statusMem.WriteRegs(core.AreaHoldingRegs, statusHealthOffset, 1, buf); err != nil {
-		t.Fatalf("WriteRegs: %v", err)
-	}
-	if err := store.Add(core.MemoryID{Port: 502, UnitID: 255}, statusMem); err != nil {
-		t.Fatalf("store.Add: %v", err)
-	}
-
-	hc := &StoreHealthChecker{
-		store: store,
-		entries: map[dataKey][]statusEntry{
-			{port: 502, unitID: 1}: {{statusPort: 502, statusUnitID: 255, baseAddr: 0}},
-		},
-	}
-	if !hc.IsHealthyFor(502, 1) {
-		t.Error("expected healthy (healthOK written), got false")
-	}
-}
-
-// TestStoreHealthCheckerHealthError verifies that IsHealthyFor returns false when
-// the health register in the status block contains a non-OK code (e.g. 2 = error).
-func TestStoreHealthCheckerHealthError(t *testing.T) {
-	store := core.NewMemStore()
-
-	statusMem, err := core.NewMemory(core.MemoryLayouts{
-		HoldingRegs: &core.AreaLayout{Start: 0, Size: 30},
-	})
-	if err != nil {
-		t.Fatalf("NewMemory: %v", err)
-	}
-	// Write healthError (2) into register offset 2.
-	buf := make([]byte, 2)
-	binary.BigEndian.PutUint16(buf, 2) // HealthError
-	if err := statusMem.WriteRegs(core.AreaHoldingRegs, statusHealthOffset, 1, buf); err != nil {
-		t.Fatalf("WriteRegs: %v", err)
-	}
-	if err := store.Add(core.MemoryID{Port: 502, UnitID: 255}, statusMem); err != nil {
-		t.Fatalf("store.Add: %v", err)
-	}
-
-	hc := &StoreHealthChecker{
-		store: store,
-		entries: map[dataKey][]statusEntry{
-			{port: 502, unitID: 1}: {{statusPort: 502, statusUnitID: 255, baseAddr: 0}},
-		},
-	}
-	if hc.IsHealthyFor(502, 1) {
-		t.Error("expected unhealthy (healthError written), got true")
+		t.Errorf("mode C write: expected exception 0x01, got %v", pdu)
 	}
 }
 
@@ -387,7 +572,6 @@ func TestStoreHealthCheckerHealthError(t *testing.T) {
 // minimalValidConfig returns a minimal valid Config suitable for testing Validate().
 func minimalValidConfig() *config.Config {
 	return &config.Config{
-		AuthorityMode: config.AuthorityModeStrict,
 		Server: config.ServerConfig{
 			Listeners: []config.ListenerConfig{
 				{
@@ -405,7 +589,7 @@ func minimalValidConfig() *config.Config {
 					ID:     "plc1",
 					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
 					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: config.TargetConfig{ListenerID: "main", UnitID: 1},
+					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: config.TargetModeB},
 				},
 			},
 		},

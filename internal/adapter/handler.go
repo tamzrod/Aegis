@@ -2,6 +2,7 @@
 package adapter
 
 import (
+	"encoding/binary"
 	"io"
 	"log"
 	"net"
@@ -13,13 +14,14 @@ import (
 // It reads requests in a loop, dispatches each to the in-process Store,
 // and writes responses back to the client.
 //
-// Authority mode is enforced before dispatch:
-//   - Write FCs (5, 6, 15, 16) are rejected with 0x01 unless mode == "standalone".
-//   - Read FCs (1, 2, 3, 4) are rejected with 0x0B in "strict" mode when health != OK.
+// Authority is enforced before dispatch using the AuthorityRegistry:
+//   - Write FCs (5, 6, 15, 16) are rejected with 0x01 unless mode == A.
+//   - Read FCs (1, 2, 3, 4) are checked against per-block health in mode B.
+//   - Reads not covered by any read block return 0x02.
 //
 // State sealing is enforced here: if a memory block has a sealing flag coil
 // and its value is 0 (sealed), the server returns Device Busy (0x06) for all requests.
-func HandleConn(conn net.Conn, store core.Store, mode string, health HealthChecker) {
+func HandleConn(conn net.Conn, store core.Store, authority *AuthorityRegistry) {
 	defer conn.Close()
 
 	localAddr, ok := conn.LocalAddr().(*net.TCPAddr)
@@ -38,10 +40,13 @@ func HandleConn(conn net.Conn, store core.Store, mode string, health HealthCheck
 			return
 		}
 
-		// Authority mode enforcement: check before state sealing and dispatch.
-		if pdu, rejected := enforceAuthority(mode, req.FunctionCode, port, uint16(req.UnitID), health); rejected {
-			_, _ = conn.Write(BuildResponse(req, pdu))
-			continue
+		// Per-target authority enforcement: check before state sealing and dispatch.
+		if authority != nil {
+			addr, qty := extractAddressQuantity(req)
+			if pdu, rejected := authority.Enforce(port, uint16(req.UnitID), req.FunctionCode, addr, qty); rejected {
+				_, _ = conn.Write(BuildResponse(req, pdu))
+				continue
+			}
 		}
 
 		mid := core.MemoryID{
@@ -80,3 +85,25 @@ func HandleConn(conn net.Conn, store core.Store, mode string, health HealthCheck
 	}
 }
 
+// extractAddressQuantity extracts the start address and quantity from a request payload.
+// For FC 1-4: payload is [addr_hi, addr_lo, qty_hi, qty_lo].
+// For FC 5, 6: payload is [addr_hi, addr_lo, value_hi, value_lo] — quantity = 1.
+// For FC 15, 16: payload is [addr_hi, addr_lo, qty_hi, qty_lo, byte_count, ...].
+// Returns (0, 0) if the payload is too short to decode.
+func extractAddressQuantity(req *Request) (address, quantity uint16) {
+	p := req.Payload
+	if len(p) < 4 {
+		return 0, 0
+	}
+	address = binary.BigEndian.Uint16(p[0:2])
+	fc := req.FunctionCode
+	switch {
+	case fc >= 1 && fc <= 4:
+		quantity = binary.BigEndian.Uint16(p[2:4])
+	case fc == 5 || fc == 6:
+		quantity = 1
+	case fc == 15 || fc == 16:
+		quantity = binary.BigEndian.Uint16(p[2:4])
+	}
+	return address, quantity
+}
