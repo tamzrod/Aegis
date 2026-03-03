@@ -1,0 +1,68 @@
+# aegis.example.yaml
+#
+# Aegis — single-binary Modbus memory backplane with integrated replication engine.
+#
+# Configuration is loaded once at startup. Invalid config causes immediate exit.
+# No hot reload in this version.
+
+server:
+  listeners:
+    - id: "primary"
+      listen: ":502"
+      memory:
+        # Data memory for device unit_id=1
+        - unit_id: 1
+          holding_registers:
+            start: 0
+            count: 100
+          input_registers:
+            start: 0
+            count: 50
+          coils:
+            start: 0
+            count: 32
+          discrete_inputs:
+            start: 0
+            count: 32
+
+        # Optional device status memory (unit_id=255)
+        # The replication engine writes a 30-register status block here.
+        - unit_id: 255
+          holding_registers:
+            start: 0
+            count: 30
+
+replicator:
+  units:
+    - id: "plc1"
+      source:
+        endpoint: "192.168.1.100:502"
+        unit_id: 1
+        timeout_ms: 1000
+
+        # Optional device status block (comment out to disable)
+        status_slot: 0        # writes status starting at holding register 0
+        device_name: "PLC1"   # up to 16 ASCII characters
+
+      reads:
+        - fc: 3               # Read Holding Registers
+          address: 0
+          quantity: 10
+        - fc: 4               # Read Input Registers
+          address: 0
+          quantity: 5
+
+      target:
+        listener_id: "primary"  # writes into the "primary" listener's memory
+        unit_id: 1              # target memory unit_id in the store
+
+        # status_unit_id: required when source.status_slot is set
+        status_unit_id: 255
+
+        # Optional per-FC address offsets (delta applied to destination address)
+        # offsets:
+        #   3: 0   # FC3 holding registers: no offset
+        #   4: 0   # FC4 input registers: no offset
+
+      poll:
+        interval_ms: 1000     # poll every 1 second
