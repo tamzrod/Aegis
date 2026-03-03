@@ -2,26 +2,7 @@
 #
 # Minimal but complete Aegis configuration used by the integration test.
 # All fields required for a valid startup configuration are present.
-
-server:
-  listeners:
-    - id: "primary"
-      listen: ":502"
-      memory:
-        # Data memory — holds replicated device registers.
-        - unit_id: 1
-          holding_registers:
-            start: 0
-            count: 100
-          input_registers:
-            start: 0
-            count: 50
-
-        # Status memory — holds the device status block (30 registers, block index 0).
-        - unit_id: 255
-          holding_registers:
-            start: 0
-            count: 30
+# Memory (data and status) is derived from replicator.units[*].target at startup.
 
 replicator:
   units:
@@ -30,7 +11,6 @@ replicator:
         endpoint: "192.168.1.100:502"
         unit_id: 1
         timeout_ms: 1000
-        status_slot: 0        # block index 0 → base register 0 in status memory
         device_name: "PLC1"
 
       reads:
@@ -40,7 +20,8 @@ replicator:
           interval_ms: 1000
 
       target:
-        listener_id: "primary"
+        port: 502
         unit_id: 1
         status_unit_id: 255
+        status_slot: 0        # block index 0 → base register 0 in status memory
         mode: "B"

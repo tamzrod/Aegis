@@ -1,3 +1,11 @@
+<!-- ARCHIVED — DO NOT USE
+     This file reflects the pre–Surface Identity Rule architecture.
+     It allowed multiple devices to share a target surface.
+     As of ARCHITECTURE_LOCK.md (Surface Identity Rule),
+     (port, unit_id) must serve exactly one device.
+     This file is preserved for historical reference only.
+-->
+
 # Configuration Integration Test — Expected Results
 
 ## What `test.yaml` represents

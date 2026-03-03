@@ -20,20 +20,10 @@ type Unit struct {
 // store must already be fully populated (call config.BuildMemStore first).
 // Assumes config has already passed validation.
 func Build(cfg *config.Config, store core.Store) ([]Unit, error) {
-	// Build a listenerID → port lookup
-	listenerPort := make(map[string]uint16)
-	for _, l := range cfg.Server.Listeners {
-		port, err := config.ParseListenPort(l.Listen)
-		if err != nil {
-			return nil, fmt.Errorf("server.listeners (%s): invalid listen %q: %w", l.ID, l.Listen, err)
-		}
-		listenerPort[l.ID] = port
-	}
-
 	var units []Unit
 
 	for _, u := range cfg.Replicator.Units {
-		unit, err := buildUnit(u, listenerPort, store)
+		unit, err := buildUnit(u, store)
 		if err != nil {
 			return nil, fmt.Errorf("unit %q: %w", u.ID, err)
 		}
@@ -45,7 +35,6 @@ func Build(cfg *config.Config, store core.Store) ([]Unit, error) {
 
 func buildUnit(
 	u config.UnitConfig,
-	listenerPort map[string]uint16,
 	store core.Store,
 ) (Unit, error) {
 
@@ -82,14 +71,10 @@ func buildUnit(
 
 	// ---- WritePlan ----
 	t := u.Target
-	port, ok := listenerPort[t.ListenerID]
-	if !ok {
-		return Unit{}, fmt.Errorf("target.listener_id %q not found", t.ListenerID)
-	}
 
 	targets := []TargetMemory{
 		{
-			MemoryID: core.MemoryID{Port: port, UnitID: t.UnitID},
+			MemoryID: core.MemoryID{Port: t.Port, UnitID: t.UnitID},
 			Offsets:  t.Offsets,
 		},
 	}
@@ -100,10 +85,10 @@ func buildUnit(
 	}
 
 	// Optional device status target
-	if u.Source.StatusSlot != nil && t.StatusUnitID != nil {
+	if t.StatusSlot != nil && t.StatusUnitID != nil {
 		plan.Status = &StatusTarget{
-			MemoryID:   core.MemoryID{Port: port, UnitID: *t.StatusUnitID},
-			BaseSlot:   *u.Source.StatusSlot,
+			MemoryID:   core.MemoryID{Port: t.Port, UnitID: *t.StatusUnitID},
+			BaseSlot:   *t.StatusSlot,
 			DeviceName: u.Source.DeviceName,
 		}
 	}

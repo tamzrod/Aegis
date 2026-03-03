@@ -7,20 +7,6 @@ import (
 
 func validBaseConfig() *Config {
 	return &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []MemoryDef{
-						{
-							UnitID:      1,
-							HoldingRegs: AreaDef{Start: 0, Count: 100},
-						},
-					},
-				},
-			},
-		},
 		Replicator: ReplicatorConfig{
 			Units: []UnitConfig{
 				{
@@ -33,9 +19,9 @@ func validBaseConfig() *Config {
 						{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000},
 					},
 					Target: TargetConfig{
-						ListenerID: "main",
-						UnitID:     1,
-						Mode:       TargetModeB,
+						Port:   502,
+						UnitID: 1,
+						Mode:   TargetModeB,
 					},
 				},
 			},
@@ -97,74 +83,42 @@ func TestValidateNilConfig(t *testing.T) {
 	}
 }
 
-func TestValidateMissingListeners(t *testing.T) {
+func TestValidateMissingReplicatorUnits(t *testing.T) {
 	cfg := &Config{}
 	if err := Validate(cfg); err == nil {
-		t.Error("expected error for missing listeners")
+		t.Error("expected error for missing replicator units")
 	}
 }
 
-func TestValidateDuplicateListenerID(t *testing.T) {
+func TestValidateDuplicateReplicatorID(t *testing.T) {
 	cfg := &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
-				{ID: "dup", Listen: ":502", Memory: []MemoryDef{{UnitID: 1, HoldingRegs: AreaDef{Count: 10}}}},
-				{ID: "dup", Listen: ":503", Memory: []MemoryDef{{UnitID: 1, HoldingRegs: AreaDef{Count: 10}}}},
-			},
-		},
-	}
-	if err := Validate(cfg); err == nil {
-		t.Error("expected error for duplicate listener IDs")
-	}
-}
-
-func TestValidateDuplicateMemoryIdentity(t *testing.T) {
-	cfg := &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
+		Replicator: ReplicatorConfig{
+			Units: []UnitConfig{
 				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []MemoryDef{
-						{UnitID: 1, HoldingRegs: AreaDef{Count: 10}},
-						{UnitID: 1, HoldingRegs: AreaDef{Count: 10}}, // duplicate (port=502, unit=1)
-					},
+					ID:     "dup",
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 1, Mode: TargetModeB},
+				},
+				{
+					ID:     "dup",
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 50, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 2, Mode: TargetModeB},
 				},
 			},
 		},
 	}
 	if err := Validate(cfg); err == nil {
-		t.Error("expected error for duplicate (port, unit_id)")
+		t.Error("expected error for duplicate replicator unit IDs")
 	}
 }
 
-func TestValidateAreaOverflow(t *testing.T) {
-	cfg := &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []MemoryDef{
-						{
-							UnitID:      1,
-							HoldingRegs: AreaDef{Start: 65535, Count: 2}, // overflow
-						},
-					},
-				},
-			},
-		},
-	}
-	if err := Validate(cfg); err == nil {
-		t.Error("expected error for address space overflow")
-	}
-}
-
-func TestValidateReplicatorUnknownListenerID(t *testing.T) {
+func TestValidateTargetPortZero(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.Replicator.Units[0].Target.ListenerID = "nonexistent"
+	cfg.Replicator.Units[0].Target.Port = 0
 	if err := Validate(cfg); err == nil {
-		t.Error("expected error for unknown listener_id")
+		t.Error("expected error for target.port == 0")
 	}
 }
 
@@ -184,72 +138,10 @@ func TestValidateReplicatorInvalidFC(t *testing.T) {
 	}
 }
 
-func TestValidateStateSealingValid(t *testing.T) {
-	cfg := &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []MemoryDef{
-						{
-							UnitID: 1,
-							Coils:  AreaDef{Start: 0, Count: 16},
-							StateSealing: &StateSealingDef{
-								Area:    "coil",
-								Address: 0,
-							},
-						},
-					},
-				},
-			},
-		},
-		Replicator: ReplicatorConfig{
-			Units: []UnitConfig{
-				{
-					ID:     "plc1",
-					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
-					Reads:  []ReadConfig{{FC: 1, Address: 0, Quantity: 8, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, Mode: TargetModeB},
-				},
-			},
-		},
-	}
-	if err := Validate(cfg); err != nil {
-		t.Errorf("expected valid state sealing config, got: %v", err)
-	}
-}
-
-func TestValidateStateSealingOutOfBounds(t *testing.T) {
-	cfg := &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []MemoryDef{
-						{
-							UnitID: 1,
-							Coils:  AreaDef{Start: 0, Count: 8},
-							StateSealing: &StateSealingDef{
-								Area:    "coil",
-								Address: 8, // out of bounds [0,8)
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	if err := Validate(cfg); err == nil {
-		t.Error("expected error for state sealing address out of bounds")
-	}
-}
-
 func TestValidateStatusSlotRequiresStatusUnitID(t *testing.T) {
 	cfg := validBaseConfig()
 	slot := uint16(0)
-	cfg.Replicator.Units[0].Source.StatusSlot = &slot
+	cfg.Replicator.Units[0].Target.StatusSlot = &slot
 	// No StatusUnitID set → should fail
 	if err := Validate(cfg); err == nil {
 		t.Error("expected error when status_slot is set but status_unit_id is missing")
@@ -277,73 +169,76 @@ func TestValidateReadIntervalMsNegative(t *testing.T) {
 }
 
 func TestValidateReplicatorWriteConflict(t *testing.T) {
-	// Two units targeting the same (listener, unit_id) with overlapping FC3 reads.
+	// Two units targeting the same (port, unit_id) — now rejected as a duplicate surface.
 	slot0 := uint16(0)
 	slot1 := uint16(1)
 	statusUID := uint16(255)
 	cfg := &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []MemoryDef{
-						{UnitID: 1, HoldingRegs: AreaDef{Start: 0, Count: 100}},
-						{UnitID: 255, HoldingRegs: AreaDef{Start: 0, Count: 60}},
-					},
-				},
-			},
-		},
 		Replicator: ReplicatorConfig{
 			Units: []UnitConfig{
 				{
 					ID:     "plc1",
-					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000, StatusSlot: &slot0, DeviceName: "PLC1"},
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000, DeviceName: "PLC1"},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID, Mode: TargetModeB},
+					Target: TargetConfig{Port: 502, UnitID: 1, StatusUnitID: &statusUID, StatusSlot: &slot0, Mode: TargetModeB},
 				},
 				{
 					ID:     "plc2",
-					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000, StatusSlot: &slot1, DeviceName: "PLC2"},
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000, DeviceName: "PLC2"},
 					Reads:  []ReadConfig{{FC: 3, Address: 5, Quantity: 10, IntervalMs: 1000}}, // overlaps [0,10) at [5,15)
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID, Mode: TargetModeB},
+					Target: TargetConfig{Port: 502, UnitID: 1, StatusUnitID: &statusUID, StatusSlot: &slot1, Mode: TargetModeB},
 				},
 			},
 		},
 	}
 	if err := Validate(cfg); err == nil {
-		t.Error("expected write conflict error for overlapping FC3 reads to same target")
+		t.Error("expected error for two units targeting the same (port, unit_id) surface")
+	}
+}
+
+func TestDuplicateSurfaceRejected(t *testing.T) {
+	// Two units with non-overlapping reads targeting the same (port, unit_id).
+	// The old write-conflict check would not have caught this; the surface uniqueness
+	// rule must reject it unconditionally.
+	cfg := &Config{
+		Replicator: ReplicatorConfig{
+			Units: []UnitConfig{
+				{
+					ID:     "dev1",
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 1, Mode: TargetModeB},
+				},
+				{
+					ID:     "dev2",
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 100, Quantity: 10, IntervalMs: 1000}}, // non-overlapping
+					Target: TargetConfig{Port: 502, UnitID: 1, Mode: TargetModeB},              // same surface
+				},
+			},
+		},
+	}
+	if err := Validate(cfg); err == nil {
+		t.Error("expected error: duplicate target surface (port=502, unit_id=1) assigned to multiple devices")
 	}
 }
 
 func TestValidateReplicatorWriteConflictDifferentUnitIDs(t *testing.T) {
 	// Two units target different unit_ids — no conflict, even with overlapping read addresses.
 	cfg := &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []MemoryDef{
-						{UnitID: 1, HoldingRegs: AreaDef{Start: 0, Count: 100}},
-						{UnitID: 2, HoldingRegs: AreaDef{Start: 0, Count: 100}},
-					},
-				},
-			},
-		},
 		Replicator: ReplicatorConfig{
 			Units: []UnitConfig{
 				{
 					ID:     "plc1",
 					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, Mode: TargetModeB},
+					Target: TargetConfig{Port: 502, UnitID: 1, Mode: TargetModeB},
 				},
 				{
 					ID:     "plc2",
 					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 2, Mode: TargetModeB}, // different unit_id
+					Target: TargetConfig{Port: 502, UnitID: 2, Mode: TargetModeB}, // different unit_id
 				},
 			},
 		},
@@ -357,69 +252,51 @@ func TestValidateStatusSlotDuplicate(t *testing.T) {
 	slot := uint16(0)
 	statusUID := uint16(255)
 	cfg := &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []MemoryDef{
-						{UnitID: 1, HoldingRegs: AreaDef{Start: 0, Count: 100}},
-						{UnitID: 255, HoldingRegs: AreaDef{Start: 0, Count: 60}},
-					},
-				},
-			},
-		},
 		Replicator: ReplicatorConfig{
 			Units: []UnitConfig{
 				{
 					ID:     "plc1",
-					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000, StatusSlot: &slot, DeviceName: "PLC1"},
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000, DeviceName: "PLC1"},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID, Mode: TargetModeB},
+					Target: TargetConfig{Port: 502, UnitID: 1, StatusUnitID: &statusUID, StatusSlot: &slot, Mode: TargetModeB},
 				},
 				{
 					ID:     "plc2",
-					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000, StatusSlot: &slot, DeviceName: "PLC2"}, // same slot
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000, DeviceName: "PLC2"},
 					Reads:  []ReadConfig{{FC: 3, Address: 50, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 2, StatusUnitID: &statusUID, Mode: TargetModeB},
+					Target: TargetConfig{Port: 502, UnitID: 2, StatusUnitID: &statusUID, StatusSlot: &slot, Mode: TargetModeB}, // same slot
 				},
 			},
 		},
 	}
 	if err := Validate(cfg); err == nil {
-		t.Error("expected error for duplicate status_slot")
+		t.Error("expected error for duplicate status_slot on same (port, status_unit_id)")
 	}
 }
 
-func TestValidateStatusSlotExceedsCapacity(t *testing.T) {
-	// slot 1 requires (1+1)*30 = 60 registers, but only 30 are allocated.
-	slot := uint16(1)
-	statusUID := uint16(255)
+func TestValidateStatusUnitIDConflictsWithDataUnitID(t *testing.T) {
+	// status_unit_id == unit_id of another unit on the same port → conflict
+	slot := uint16(0)
+	statusUID := uint16(2) // conflicts with plc2's unit_id
 	cfg := &Config{
-		Server: ServerConfig{
-			Listeners: []ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []MemoryDef{
-						{UnitID: 1, HoldingRegs: AreaDef{Start: 0, Count: 100}},
-						{UnitID: 255, HoldingRegs: AreaDef{Start: 0, Count: 30}}, // only 30 regs
-					},
-				},
-			},
-		},
 		Replicator: ReplicatorConfig{
 			Units: []UnitConfig{
 				{
 					ID:     "plc1",
-					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000, StatusSlot: &slot, DeviceName: "PLC1"},
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000, DeviceName: "PLC1"},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID, Mode: TargetModeB},
+					Target: TargetConfig{Port: 502, UnitID: 1, StatusUnitID: &statusUID, StatusSlot: &slot, Mode: TargetModeB},
+				},
+				{
+					ID:     "plc2",
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 2, Mode: TargetModeB}, // unit_id=2 == plc1's status_unit_id
 				},
 			},
 		},
 	}
 	if err := Validate(cfg); err == nil {
-		t.Error("expected error when status_slot exceeds status memory capacity")
+		t.Error("expected error when status_unit_id conflicts with a data unit_id on same port")
 	}
 }

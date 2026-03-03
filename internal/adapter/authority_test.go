@@ -61,24 +61,13 @@ func (m *mockBlockHealthReader) setException(unitID string, blockIdx int, code b
 // target: port=502, unitID=1, mode=given, reads=[{FC4, addr=0, qty=10}]
 func buildTestRegistry(mode string, health BlockHealthReader) *AuthorityRegistry {
 	cfg := &config.Config{
-		Server: config.ServerConfig{
-			Listeners: []config.ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []config.MemoryDef{
-						{UnitID: 1, HoldingRegs: config.AreaDef{Start: 0, Count: 10}},
-					},
-				},
-			},
-		},
 		Replicator: config.ReplicatorConfig{
 			Units: []config.UnitConfig{
 				{
 					ID:     "unit1",
 					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
 					Reads:  []config.ReadConfig{{FC: 4, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: mode},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: mode},
 				},
 			},
 		},
@@ -89,17 +78,6 @@ func buildTestRegistry(mode string, health BlockHealthReader) *AuthorityRegistry
 // buildTwoBlockRegistry builds a registry with two FC4 blocks: [0,10) and [10,10).
 func buildTwoBlockRegistry(mode string, health BlockHealthReader) *AuthorityRegistry {
 	cfg := &config.Config{
-		Server: config.ServerConfig{
-			Listeners: []config.ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []config.MemoryDef{
-						{UnitID: 1, InputRegs: config.AreaDef{Start: 0, Count: 20}},
-					},
-				},
-			},
-		},
 		Replicator: config.ReplicatorConfig{
 			Units: []config.UnitConfig{
 				{
@@ -109,7 +87,7 @@ func buildTwoBlockRegistry(mode string, health BlockHealthReader) *AuthorityRegi
 						{FC: 4, Address: 0, Quantity: 10, IntervalMs: 200},   // block 0: [0,10)
 						{FC: 4, Address: 10, Quantity: 10, IntervalMs: 5000}, // block 1: [10,20)
 					},
-					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: mode},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: mode},
 				},
 			},
 		},
@@ -252,6 +230,27 @@ func TestEnforceReadModeAAlwaysServes(t *testing.T) {
 // New spec tests
 // --------------------
 
+// buildHoleRegistry builds a registry for unit 1 on port 502 with two non-adjacent
+// FC3 blocks: [0,5) and [15,5). Bounding range = [0,20); hole = [5,15).
+func buildHoleRegistry(mode string, health BlockHealthReader) *AuthorityRegistry {
+	cfg := &config.Config{
+		Replicator: config.ReplicatorConfig{
+			Units: []config.UnitConfig{
+				{
+					ID:     "unit1",
+					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads: []config.ReadConfig{
+						{FC: 3, Address: 0, Quantity: 5, IntervalMs: 1000},  // block 0: [0,5)
+						{FC: 3, Address: 15, Quantity: 5, IntervalMs: 1000}, // block 1: [15,20)
+					},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: mode},
+				},
+			},
+		},
+	}
+	return BuildAuthorityRegistry(cfg, health)
+}
+
 // TestTwoFC4BlocksDifferentIntervals verifies config with two FC4 blocks at different
 // intervals builds correctly with two separate block entries in the registry.
 func TestTwoFC4BlocksDifferentIntervals(t *testing.T) {
@@ -361,6 +360,63 @@ func TestPartialOverlapReturns0x02(t *testing.T) {
 	}
 	if len(pdu) != 2 || pdu[0] != 0x04|0x80 || pdu[1] != 0x02 {
 		t.Errorf("expected exception 0x02, got %v", pdu)
+	}
+}
+
+// TestModeBUnprimedBlockReturns0x0B verifies that mode B returns 0x0B when the
+// covering block has never been successfully polled (no health record exists yet).
+func TestModeBUnprimedBlockReturns0x0B(t *testing.T) {
+	// No health data set at all — block is unprimed.
+	health := newMockHealth()
+	reg := buildTestRegistry(config.TargetModeB, health)
+	pdu, rejected := reg.Enforce(502, 1, 4, 0, 5)
+	if !rejected {
+		t.Error("mode B + unprimed block: read should be blocked with 0x0B")
+		return
+	}
+	if len(pdu) != 2 || pdu[0] != 0x04|0x80 || pdu[1] != 0x0B {
+		t.Errorf("expected exception 0x0B for unprimed block, got %v", pdu)
+	}
+}
+
+// TestModeBHoleReturns0x02 verifies that mode B returns 0x02 for a read that lands
+// within the bounding range but in a gap between configured segments.
+func TestModeBHoleReturns0x02(t *testing.T) {
+	health := newMockHealth()
+	health.setHealthy("unit1", 0)
+	health.setHealthy("unit1", 1)
+	reg := buildHoleRegistry(config.TargetModeB, health)
+	// Bounding range is [0,20). Blocks cover [0,5) and [15,20). Hole = [5,15).
+	// Request [8,5) lands entirely in the hole.
+	pdu, rejected := reg.Enforce(502, 1, 3, 8, 5)
+	if !rejected {
+		t.Error("mode B + hole: read should be rejected with 0x02")
+		return
+	}
+	if len(pdu) != 2 || pdu[0] != 0x03|0x80 || pdu[1] != 0x02 {
+		t.Errorf("expected exception 0x02 for hole in mode B, got %v", pdu)
+	}
+}
+
+// TestModeAHoleAllowed verifies that mode A allows reads that land in a hole
+// within the bounding range (caller will receive zeros from the store).
+func TestModeAHoleAllowed(t *testing.T) {
+	health := newMockHealth()
+	reg := buildHoleRegistry(config.TargetModeA, health)
+	pdu, rejected := reg.Enforce(502, 1, 3, 8, 5)
+	if rejected {
+		t.Errorf("mode A + hole: read should be allowed (serve zeros), got exception PDU: %v", pdu)
+	}
+}
+
+// TestModeCHoleAllowed verifies that mode C allows reads that land in a hole
+// within the bounding range (caller will receive zeros from the store).
+func TestModeCHoleAllowed(t *testing.T) {
+	health := newMockHealth()
+	reg := buildHoleRegistry(config.TargetModeC, health)
+	pdu, rejected := reg.Enforce(502, 1, 3, 8, 5)
+	if rejected {
+		t.Errorf("mode C + hole: read should be allowed (serve zeros), got exception PDU: %v", pdu)
 	}
 }
 
@@ -477,24 +533,13 @@ func sendAndReceive(t *testing.T, authority *AuthorityRegistry, store core.Store
 // buildFC3Registry builds a registry covering FC3 (holding registers) for unit 1 on port 502.
 func buildFC3Registry(mode string, health BlockHealthReader) *AuthorityRegistry {
 	cfg := &config.Config{
-		Server: config.ServerConfig{
-			Listeners: []config.ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []config.MemoryDef{
-						{UnitID: 1, HoldingRegs: config.AreaDef{Start: 0, Count: 10}},
-					},
-				},
-			},
-		},
 		Replicator: config.ReplicatorConfig{
 			Units: []config.UnitConfig{
 				{
 					ID:     "unit1",
 					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
 					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: mode},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: mode},
 				},
 			},
 		},
@@ -572,24 +617,13 @@ func TestHandleConnModeCWriteRejected(t *testing.T) {
 // minimalValidConfig returns a minimal valid Config suitable for testing Validate().
 func minimalValidConfig() *config.Config {
 	return &config.Config{
-		Server: config.ServerConfig{
-			Listeners: []config.ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []config.MemoryDef{
-						{UnitID: 1, HoldingRegs: config.AreaDef{Start: 0, Count: 10}},
-					},
-				},
-			},
-		},
 		Replicator: config.ReplicatorConfig{
 			Units: []config.UnitConfig{
 				{
 					ID:     "plc1",
 					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
 					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: config.TargetModeB},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: config.TargetModeB},
 				},
 			},
 		},

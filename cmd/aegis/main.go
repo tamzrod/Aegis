@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -38,14 +39,20 @@ func main() {
 	log.Println("aegis: config loaded and validated")
 
 	// --------------------
-	// Build the shared in-process memory store
+	// Build the shared in-process memory store (derived from replicator config)
 	// --------------------
 	store, err := config.BuildMemStore(cfg)
 	if err != nil {
 		log.Fatalf("aegis: memory store build failed: %v", err)
 	}
 
-	log.Printf("aegis: memory store initialized (%d listeners)", len(cfg.Server.Listeners))
+	// Collect unique listener ports derived from replicator targets.
+	seenPorts := make(map[uint16]struct{})
+	for _, u := range cfg.Replicator.Units {
+		seenPorts[u.Target.Port] = struct{}{}
+	}
+
+	log.Printf("aegis: memory store initialized (%d unique port(s))", len(seenPorts))
 
 	// --------------------
 	// Build per-block health store
@@ -67,15 +74,17 @@ func main() {
 
 	// --------------------
 	// Build authority registry and start Modbus TCP server adapters
+	// One adapter is started per unique target port derived from replicator config.
 	// --------------------
 	authority := adapter.BuildAuthorityRegistry(cfg, healthStore)
-	for _, l := range cfg.Server.Listeners {
-		srv := adapter.NewServer(l.Listen, store, authority)
-		go func(id, listen string, s *adapter.Server) {
+	for port := range seenPorts {
+		listenAddr := fmt.Sprintf(":%d", port)
+		srv := adapter.NewServer(listenAddr, store, authority)
+		go func(listen string, s *adapter.Server) {
 			if err := s.ListenAndServe(); err != nil {
-				log.Fatalf("aegis: adapter %s (%s) failed: %v", id, listen, err)
+				log.Fatalf("aegis: adapter (%s) failed: %v", listen, err)
 			}
-		}(l.ID, l.Listen, srv)
+		}(listenAddr, srv)
 	}
 
 	log.Println("aegis: server adapters started")
