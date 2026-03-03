@@ -15,11 +15,14 @@ import (
 type Server struct {
 	listen string
 	store  core.Store
+	mode   string
+	health HealthChecker
 }
 
-// NewServer creates a Server for the given listen address and store.
-func NewServer(listen string, store core.Store) *Server {
-	return &Server{listen: listen, store: store}
+// NewServer creates a Server for the given listen address, store, authority mode,
+// and health checker.
+func NewServer(listen string, store core.Store, mode string, health HealthChecker) *Server {
+	return &Server{listen: listen, store: store, mode: mode, health: health}
 }
 
 // ListenAndServe starts accepting Modbus TCP connections.
@@ -39,6 +42,7 @@ func (s *Server) ListenAndServe() error {
 		if err != nil {
 			return err
 		}
-		go HandleConn(conn, s.store)
+		go HandleConn(conn, s.store, s.mode, s.health)
 	}
 }
+

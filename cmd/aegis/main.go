@@ -61,8 +61,9 @@ func main() {
 	// --------------------
 	// Start Modbus TCP server adapters (one goroutine per listener)
 	// --------------------
+	hc := adapter.BuildHealthChecker(cfg, store)
 	for _, l := range cfg.Server.Listeners {
-		srv := adapter.NewServer(l.Listen, store)
+		srv := adapter.NewServer(l.Listen, store, cfg.AuthorityMode, hc)
 		go func(id, listen string, s *adapter.Server) {
 			if err := s.ListenAndServe(); err != nil {
 				log.Fatalf("aegis: adapter %s (%s) failed: %v", id, listen, err)

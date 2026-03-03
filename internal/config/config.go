@@ -1,9 +1,30 @@
 // internal/config/config.go
 package config
 
+// Authority mode constants.
+const (
+	// AuthorityModeStandalone allows client writes and always serves memory reads.
+	// Health state does not gate reads. Engine may overwrite values on successful poll.
+	AuthorityModeStandalone = "standalone"
+
+	// AuthorityModeStrict is the default authority mode.
+	// Client writes are rejected (Modbus exception 0x01).
+	// Reads are blocked with exception 0x0B when upstream health is not OK.
+	AuthorityModeStrict = "strict"
+
+	// AuthorityModeBuffer rejects client writes (0x01) but always serves memory reads.
+	// Health state does not block reads.
+	AuthorityModeBuffer = "buffer"
+)
+
 // Config is the root configuration for Aegis.
 // It is loaded once at startup and never modified at runtime.
 type Config struct {
+	// AuthorityMode controls how the server handles client reads and writes.
+	// Valid values: "standalone", "strict", "buffer".
+	// Defaults to "strict" if not specified.
+	AuthorityMode string `yaml:"authority_mode"`
+
 	// Server declares one or more Modbus TCP listener gates and their memory layouts.
 	Server ServerConfig `yaml:"server"`
 
