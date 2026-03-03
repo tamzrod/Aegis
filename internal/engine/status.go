@@ -7,25 +7,39 @@ package engine
 // StatusSlotsPerDevice is the fixed number of holding register slots per device status block.
 const StatusSlotsPerDevice uint16 = 30
 
+// statusMagic is the fixed 3-byte magic constant written into the header of every
+// status block. It is protocol-locked and must not be configurable.
+const (
+	statusMagicByte0 byte = 0x41 // 'A'
+	statusMagicByte1 byte = 0x47 // 'G'
+	statusMagicByte2 byte = 0x53 // 'S'
+)
+
 // Slot offsets within each device status block.
 const (
-	slotHealthCode    = 0
-	slotLastErrorCode = 1
-	slotSecondsInErr  = 2
+	// Header (registers 0–1): 3-byte magic constant + 1-byte block index.
+	slotHeader0 = 0 // uint16: magic[0] << 8 | magic[1]
+	slotHeader1 = 1 // uint16: magic[2] << 8 | block_index
 
-	slotDeviceNameStart = 3
-	slotDeviceNameSlots = 8
+	slotHealthCode    = 2
+	slotLastErrorCode = 3
+	slotSecondsInErr  = 4
 
-	slotRequestsTotalLow        = 20
-	slotRequestsTotalHigh       = 21
-	slotResponsesValidLow       = 22
-	slotResponsesValidHigh      = 23
-	slotTimeoutsTotalLow        = 24
-	slotTimeoutsTotalHigh       = 25
-	slotTransportErrorsTotalLow = 26
+	slotDeviceNameStart = 5
+	slotDeviceNameSlots = 8 // registers 5–12
+
+	// registers 13–19 are reserved (always zero)
+
+	slotRequestsTotalLow         = 20
+	slotRequestsTotalHigh        = 21
+	slotResponsesValidLow        = 22
+	slotResponsesValidHigh       = 23
+	slotTimeoutsTotalLow         = 24
+	slotTimeoutsTotalHigh        = 25
+	slotTransportErrorsTotalLow  = 26
 	slotTransportErrorsTotalHigh = 27
-	slotConsecutiveFailCurr     = 28
-	slotConsecutiveFailMax      = 29
+	slotConsecutiveFailCurr      = 28
+	slotConsecutiveFailMax       = 29
 )
 
 // Health codes
@@ -55,8 +69,13 @@ type StatusSnapshot struct {
 
 // encodeStatusBlock encodes a StatusSnapshot into a full device status register block.
 // Layout is protocol-locked (30 registers).
-func encodeStatusBlock(s StatusSnapshot, deviceName string) []uint16 {
+// blockIndex is the sequential block index (0–255) written into the header.
+func encodeStatusBlock(s StatusSnapshot, deviceName string, blockIndex uint8) []uint16 {
 	regs := make([]uint16, StatusSlotsPerDevice)
+
+	// Header: fixed magic constant + block index.
+	regs[slotHeader0] = uint16(statusMagicByte0)<<8 | uint16(statusMagicByte1)
+	regs[slotHeader1] = uint16(statusMagicByte2)<<8 | uint16(blockIndex)
 
 	regs[slotHealthCode] = s.Health
 	regs[slotLastErrorCode] = s.LastErrorCode
