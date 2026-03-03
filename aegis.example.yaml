@@ -4,33 +4,9 @@
 #
 # Configuration is loaded once at startup. Invalid config causes immediate exit.
 # No hot reload in this version.
-
-server:
-  listeners:
-    - id: "primary"
-      listen: ":502"
-      memory:
-        # Data memory for device unit_id=1
-        - unit_id: 1
-          holding_registers:
-            start: 0
-            count: 100
-          input_registers:
-            start: 0
-            count: 50
-          coils:
-            start: 0
-            count: 32
-          discrete_inputs:
-            start: 0
-            count: 32
-
-        # Optional device status memory (unit_id=255)
-        # The replication engine writes a 30-register status block here.
-        - unit_id: 255
-          holding_registers:
-            start: 0
-            count: 30
+#
+# Memory layout (data and status) is derived entirely from replicator.units[*].target.
+# No explicit server.listeners.memory section is required.
 
 replicator:
   units:
@@ -40,9 +16,8 @@ replicator:
         unit_id: 1
         timeout_ms: 1000
 
-        # Optional device status block (comment out to disable)
-        status_slot: 0        # writes status starting at holding register 0
-        device_name: "PLC1"   # up to 16 ASCII characters
+        # Optional device name included in the status block (up to 16 ASCII characters)
+        device_name: "PLC1"
 
       reads:
         - fc: 3               # Read Holding Registers
@@ -55,11 +30,17 @@ replicator:
           interval_ms: 5000   # slow-moving data: 5 s
 
       target:
-        listener_id: "primary"  # writes into the "primary" listener's memory
-        unit_id: 1              # target memory unit_id in the store
+        port: 502             # Modbus TCP listener port (listener is created automatically)
+        unit_id: 1            # target memory unit_id in the store
 
-        # status_unit_id: required when source.status_slot is set
+        # status_unit_id: required when status_slot is set.
+        # Must differ from all data unit_ids on the same port.
         status_unit_id: 255
+
+        # status_slot: zero-based slot index for this unit's status block.
+        # Each slot occupies 30 consecutive holding registers starting at slot*30.
+        # Must be unique per (port, status_unit_id).
+        status_slot: 0
 
         # mode: authority mode for this target (default = "B")
         # A = standalone (allows writes, always serves reads)

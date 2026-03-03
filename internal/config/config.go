@@ -20,56 +20,10 @@ const (
 
 // Config is the root configuration for Aegis.
 // It is loaded once at startup and never modified at runtime.
+// Listeners and memory are derived from replicator.units[*].target at startup.
 type Config struct {
-	// Server declares one or more Modbus TCP listener gates and their memory layouts.
-	Server ServerConfig `yaml:"server"`
-
 	// Replicator declares the upstream devices to poll and the in-process targets to write.
 	Replicator ReplicatorConfig `yaml:"replicator"`
-}
-
-// --------------------
-// Server (Modbus TCP adapter)
-// --------------------
-
-// ServerConfig declares all Modbus TCP listeners and their associated memory.
-type ServerConfig struct {
-	Listeners []ListenerConfig `yaml:"listeners"`
-}
-
-// ListenerConfig defines a single Modbus TCP listener.
-// Memory blocks are scoped to this listener; their MemoryID = (Port, UnitID).
-type ListenerConfig struct {
-	ID     string           `yaml:"id"`
-	Listen string           `yaml:"listen"` // e.g. ":502" or "0.0.0.0:502"
-	Memory []MemoryDef      `yaml:"memory"`
-}
-
-// MemoryDef declares one memory block within a listener.
-type MemoryDef struct {
-	UnitID         uint16   `yaml:"unit_id"`
-	Coils          AreaDef  `yaml:"coils"`
-	DiscreteInputs AreaDef  `yaml:"discrete_inputs"`
-	HoldingRegs    AreaDef  `yaml:"holding_registers"`
-	InputRegs      AreaDef  `yaml:"input_registers"`
-
-	// Optional state sealing.
-	// Presence enables state sealing for this memory block.
-	StateSealing *StateSealingDef `yaml:"state_sealing"`
-}
-
-// AreaDef declares the address range for one Modbus area.
-// A zero Count means the area is not allocated.
-type AreaDef struct {
-	Start uint16 `yaml:"start"`
-	Count uint16 `yaml:"count"`
-}
-
-// StateSealingDef configures the state sealing flag for a memory block.
-// Semantics: 0 = sealed (deny access), 1 = unsealed (allow access).
-type StateSealingDef struct {
-	Area    string `yaml:"area"`    // "coil" only
-	Address uint16 `yaml:"address"` // zero-based address of the flag coil
 }
 
 // --------------------
@@ -95,10 +49,8 @@ type SourceConfig struct {
 	UnitID    uint8  `yaml:"unit_id"`
 	TimeoutMs int    `yaml:"timeout_ms"`
 
-	// Optional device status block.
-	// When set, device status is written into the store at the configured slot.
-	StatusSlot *uint16 `yaml:"status_slot"`
-	DeviceName string  `yaml:"device_name"`
+	// Optional device name included in the status block (up to 16 ASCII characters).
+	DeviceName string `yaml:"device_name"`
 }
 
 // ReadConfig describes one Modbus read geometry and its independent poll cadence.
@@ -111,17 +63,23 @@ type ReadConfig struct {
 
 // TargetConfig describes the in-process store target to write into.
 // No network endpoint: writes go directly into the in-process store.
+// Listeners and memory are derived at runtime from this configuration.
 type TargetConfig struct {
-	// ListenerID references the server listener by its ID.
-	// The port is derived from the listener's listen address.
-	ListenerID string `yaml:"listener_id"`
+	// Port is the TCP port of the Modbus listener for this target.
+	// A listener is created for each unique port across all replicator units.
+	Port uint16 `yaml:"port"`
 
-	// UnitID is the unit ID of the memory block in the store.
+	// UnitID is the unit ID of the data memory block in the store.
 	UnitID uint16 `yaml:"unit_id"`
 
 	// StatusUnitID is the unit ID of the memory block used for device status.
-	// Only required when source.status_slot is set.
+	// Required when status_slot is set. Must differ from all data unit_ids on the same port.
 	StatusUnitID *uint16 `yaml:"status_unit_id"`
+
+	// StatusSlot is the zero-based slot index for this unit's status block.
+	// Each slot occupies 30 consecutive holding registers starting at slot*30.
+	// Required when status_unit_id is set. Must be unique per (port, status_unit_id).
+	StatusSlot *uint16 `yaml:"status_slot"`
 
 	// Offsets are per-FC address deltas applied when writing to the store.
 	// Key is the function code (1, 2, 3, 4); missing FC defaults to 0.

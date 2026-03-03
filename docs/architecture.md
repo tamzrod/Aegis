@@ -58,11 +58,11 @@ Loads, validates, and materialises the YAML configuration file. It also contains
 
 | File | Responsibility |
 |---|---|
-| `config.go` | Go struct tree that mirrors the YAML schema: `Config`, `ServerConfig`, `ListenerConfig`, `MemoryDef`, `AreaDef`, `StateSealingDef`, `ReplicatorConfig`, `UnitConfig`, `SourceConfig`, `ReadConfig`, `TargetConfig`, `PollConfig`. |
+| `config.go` | Go struct tree that mirrors the YAML schema: `Config`, `ReplicatorConfig`, `UnitConfig`, `SourceConfig`, `ReadConfig`, `TargetConfig`. The `ServerConfig`/`ListenerConfig`/`MemoryDef` hierarchy has been removed; listeners and memory are now derived at runtime. |
 | `loader.go` | `Load(path string) (*Config, error)` — reads the file with `os.ReadFile` and unmarshals with `gopkg.in/yaml.v3`. No validation. |
 | `validate.go` | `Validate(cfg *Config) error` — structural and constraint checks. Does not mutate the config. |
-| `build_store.go` | `BuildMemStore(cfg *Config) (*core.MemStore, error)` — iterates over every listener and memory definition, calls `core.NewMemory`, optionally calls `SetStateSealing`, and registers each instance in the store via `store.Add`. |
-| `helpers.go` | `ParseListenPort(listen string) (uint16, error)` — shared helper (also used by `engine/builder.go`). |
+| `build_store.go` | `BuildMemStore(cfg *Config) (*core.MemStore, error)` — derives data memory surfaces from read bounding ranges per `(port, unit_id, FC)` and status memory surfaces from `(port, status_unit_id)` with size `(max_slot+1)*30` registers. |
+| `helpers.go` | `ParseListenPort(listen string) (uint16, error)` — shared helper. |
 
 ---
 
@@ -100,7 +100,8 @@ Modbus TCP server. Pure transport adapter — no logic, no state beyond the conn
 | File | Responsibility |
 |---|---|
 | `server.go` | `Server` struct. `ListenAndServe()` — `net.Listen("tcp", ...)`, accept loop, `go HandleConn(conn, store)` per connection. |
-| `handler.go` | `HandleConn(conn, store)` — per-connection read loop. Derives `Port` from `conn.LocalAddr()`. Checks state sealing flag before dispatching. Calls `DispatchMemory`. |
+| `handler.go` | `HandleConn(conn, store)` — per-connection read loop. Derives `Port` from `conn.LocalAddr()`. Calls `DispatchMemory`. |
+| `authority.go` | `AuthorityRegistry` and `BuildAuthorityRegistry`. Enforces per-target mode (A/B/C), bounding-range checks, hole logic (within bounding range but not covered by a segment: B→0x02, A/C→serve zeros), unprimed block gating (B→0x0B), and upstream exception forwarding. |
 | `parser.go` | `ReadRequest(conn, port) (*Request, error)` — reads and decodes the 6-byte MBAP header, then the PDU. |
 | `request.go` | `Request` struct (`TransactionID`, `UnitID`, `Port`, `FunctionCode`, `Payload`). |
 | `response.go` | `BuildResponse(req, pdu) []byte` — assembles the MBAP response frame. |
@@ -164,20 +165,22 @@ main()
   │      failure → log.Fatalf("config validation failed: %v", err)
   │
   ├─4─ config.BuildMemStore(cfg)
-  │      for each listener → for each memory def:
-  │        core.NewMemory(layouts)
-  │        optional: mem.SetStateSealing(...)
+  │      for each (port, unit_id) derived from replicator reads:
+  │        compute bounding range per FC → core.NewMemory(layouts)
   │        store.Add(MemoryID{port, unitID}, mem)
+  │      for each (port, status_unit_id) with status_slot:
+  │        allocate (max_slot+1)*30 holding registers
+  │        store.Add(MemoryID{port, statusUnitID}, mem)
   │      failure → log.Fatalf("memory store build failed: %v", err)
   │
   ├─5─ engine.Build(cfg, store)
   │      for each replicator unit:
   │        builds Poller (lazy connect, no initial dial)
-  │        builds WritePlan → StoreWriter
+  │        builds WritePlan → StoreWriter (uses target.Port directly)
   │      failure → log.Fatalf("engine build failed: %v", err)
   │
-  ├─6─ for each cfg.Server.Listeners:
-  │      adapter.NewServer(l.Listen, store)
+  ├─6─ for each unique target.Port across all replicator units:
+  │      adapter.NewServer(":PORT", store)
   │      go srv.ListenAndServe()   ← blocks inside on net.Listen + accept loop
   │      failure inside goroutine → log.Fatalf
   │
@@ -306,15 +309,13 @@ Config loading is a two-step synchronous process that runs before any goroutine 
 - Returns the populated `*Config` or an error. Does not validate field values.
 
 **Step 2 — `config.Validate(cfg *Config) error`**:
-- `validateServer`: checks at least one listener; unique IDs; unique listen addresses; valid port; at least one memory block per listener; `unit_id` in range [1, 255]; area bounds within 16-bit space; state sealing coherence (area must be "coil", coils must be allocated, address must be in-bounds); no duplicate `(port, unit_id)` pairs.
-- `validateReplicator`: checks at least one read block per unit; valid FC (1–4); positive quantities; `target.listener_id` must reference a declared listener; `target.unit_id` in [1, 255]; if `source.status_slot` is set then `target.status_unit_id` must be set; positive `poll.interval_ms`.
+- Requires at least one replicator unit.
+- `validateReplicator`: checks unique unit IDs; `target.port` > 0; `target.unit_id` in [1, 255]; if `target.status_slot` is set then `target.status_unit_id` must also be set and differ from all data `unit_id` values on the same port; no duplicate `status_slot` on the same `(port, status_unit_id)`; no overlapping read ranges for the same `(port, unit_id, FC)` (write conflict check); positive `reads[*].interval_ms`.
 - Does not mutate the config.
 
 **`config.BuildMemStore(cfg *Config) (*core.MemStore, error)`**:
-- Iterates listeners and memory definitions.
-- For each definition: calls `core.NewMemory(MemoryLayouts{...})`, which allocates the backing slices and validates each `AreaLayout`.
-- Optionally calls `mem.SetStateSealing(...)`.
-- Registers via `store.Add(MemoryID{port, unitID}, mem)`.
+- **Data memory**: for each `(port, unit_id)` pair across all replicator units, collects all read blocks and computes a bounding range per FC (min start address, max end address). Allocates one `AreaLayout` per FC with the bounding range. Holes within the bounding range are not allocated separately but are served as zeros (mode A/C) or rejected with 0x02 (mode B) by the adapter authority.
+- **Status memory**: for each `(port, status_unit_id)` pair, allocates `(max(status_slot) + 1) * 30` holding registers starting at address 0. Each slot occupies 30 consecutive registers at `slot * 30`.
 
 The YAML file is loaded exactly once at startup. There is no hot-reload mechanism.
 
@@ -330,9 +331,9 @@ The YAML file is loaded exactly once at startup. There is no hot-reload mechanis
 | Validation failure | `config.Validate` returns error | `log.Fatalf("config validation failed: %v", err)` → exit code 1 |
 | Memory store build failure | `config.BuildMemStore` returns error | `log.Fatalf("aegis: memory store build failed: %v", err)` → exit code 1 |
 | Engine build failure | `engine.Build` returns error | `log.Fatalf("aegis: engine build failed: %v", err)` → exit code 1 |
-| Adapter listen failure | `net.Listen` fails inside goroutine | `log.Fatalf("aegis: adapter %s (%s) failed: %v", ...)` → exit code 1 |
+| Adapter listen failure | `net.Listen` fails inside goroutine | `log.Fatalf("aegis: adapter (%s) failed: %v", ...)` → exit code 1 |
 
-In all cases the process terminates before serving any request. No goroutines, listeners, or pollers are started prior to completion of steps 2–5 in the boot sequence. Validation errors include the config path and field position (e.g. `server.listeners[0] (primary).memory[1]: unit_id must be > 0`).
+In all cases the process terminates before serving any request. No goroutines, listeners, or pollers are started prior to completion of steps 2–5 in the boot sequence. Validation errors include the field path (e.g. `replicator.units[0] (plc1): target.port must be > 0`).
 
 ---
 

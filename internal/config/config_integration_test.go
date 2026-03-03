@@ -50,13 +50,7 @@ func TestConfigIntegration(t *testing.T) {
 		t.Fatalf("BuildMemStore: unexpected error: %v", err)
 	}
 
-	// --- Assert: expected listener and memory counts ---
-	if got := len(cfg.Server.Listeners); got != 1 {
-		t.Errorf("listeners: want 1, got %d", got)
-	}
-	if got := len(cfg.Server.Listeners[0].Memory); got != 2 {
-		t.Errorf("memory definitions: want 2, got %d", got)
-	}
+	// --- Assert: expected replicator unit and read counts ---
 	if got := len(cfg.Replicator.Units); got != 1 {
 		t.Errorf("replicator units: want 1, got %d", got)
 	}
@@ -78,28 +72,27 @@ func TestConfigIntegration(t *testing.T) {
 
 	// --- Assert: status slot base aligns with the 30-register block size ---
 	unit := cfg.Replicator.Units[0]
-	if unit.Source.StatusSlot == nil {
-		t.Fatal("expected status_slot to be set")
+	if unit.Target.StatusSlot == nil {
+		t.Fatal("expected target.status_slot to be set")
 	}
-	blockIndex := uint32(*unit.Source.StatusSlot)
+	blockIndex := uint32(*unit.Target.StatusSlot)
 	blockStart := blockIndex * statusBlockSize
 	blockEnd := blockStart + statusBlockSize
 
 	// The status memory must have enough holding registers to contain the full block.
-	statusMemHRCount := uint32(0)
-	for _, mem := range cfg.Server.Listeners[0].Memory {
-		if mem.UnitID == uint16(*unit.Target.StatusUnitID) {
-			statusMemHRCount = uint32(mem.HoldingRegs.Count)
-			break
+	statusMem, ok := store.Get(statusID)
+	if !ok {
+		t.Fatal("status memory not found in store")
+	}
+	// Verify the status memory can hold the block by attempting a read at the block end.
+	// If the block end exceeds allocated size, ReadRegs will return ErrOutOfBounds.
+	if blockEnd > 0 {
+		dst := make([]byte, statusBlockSize*2)
+		if err := statusMem.ReadRegs(core.AreaHoldingRegs, uint16(blockStart), statusBlockSize, dst); err != nil {
+			t.Errorf(
+				"status slot alignment: block [%d, %d) not readable from status memory: %v",
+				blockStart, blockEnd, err,
+			)
 		}
-	}
-	if statusMemHRCount == 0 {
-		t.Fatal("status memory has no holding registers allocated")
-	}
-	if blockEnd > statusMemHRCount {
-		t.Errorf(
-			"status slot alignment: block [%d, %d) exceeds status memory holding register count %d",
-			blockStart, blockEnd, statusMemHRCount,
-		)
 	}
 }

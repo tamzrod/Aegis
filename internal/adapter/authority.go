@@ -23,11 +23,19 @@ type targetReadBlock struct {
 	quantity uint16
 }
 
+// boundingRange is the inclusive address range [start, end) covering all read blocks
+// for one (port, unitID, FC) combination.
+type boundingRange struct {
+	start uint16
+	end   uint16 // exclusive
+}
+
 // targetEntry holds the authority configuration for one (port, unitID) pair.
 type targetEntry struct {
-	mode         string            // "A", "B", or "C"
-	replicatorID string            // replicator unit string ID (for health lookups)
-	blocks       []targetReadBlock // configured read blocks for this target
+	mode           string            // "A", "B", or "C"
+	replicatorID   string            // replicator unit string ID (for health lookups)
+	blocks         []targetReadBlock // configured read blocks for this target
+	boundingRanges map[uint8]boundingRange // fc → bounding range derived from read blocks
 }
 
 type targetKey struct {
@@ -46,22 +54,10 @@ type AuthorityRegistry struct {
 // BuildAuthorityRegistry constructs an AuthorityRegistry from the validated config.
 // Assumes config.Validate() has already passed.
 func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *AuthorityRegistry {
-	listenerPort := make(map[string]uint16)
-	for _, l := range cfg.Server.Listeners {
-		port, err := config.ParseListenPort(l.Listen)
-		if err != nil {
-			continue
-		}
-		listenerPort[l.ID] = port
-	}
-
 	targets := make(map[targetKey]targetEntry)
 
 	for _, u := range cfg.Replicator.Units {
-		port, ok := listenerPort[u.Target.ListenerID]
-		if !ok {
-			continue
-		}
+		port := u.Target.Port
 		key := targetKey{port: port, unitID: u.Target.UnitID}
 
 		blocks := make([]targetReadBlock, 0, len(u.Reads))
@@ -74,10 +70,29 @@ func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *Autho
 			})
 		}
 
+		// Compute bounding ranges per FC.
+		brs := make(map[uint8]boundingRange)
+		for _, r := range u.Reads {
+			end := r.Address + r.Quantity
+			br, exists := brs[r.FC]
+			if !exists {
+				brs[r.FC] = boundingRange{start: r.Address, end: end}
+			} else {
+				if r.Address < br.start {
+					br.start = r.Address
+				}
+				if end > br.end {
+					br.end = end
+				}
+				brs[r.FC] = br
+			}
+		}
+
 		targets[key] = targetEntry{
-			mode:         u.Target.Mode,
-			replicatorID: u.ID,
-			blocks:       blocks,
+			mode:           u.Target.Mode,
+			replicatorID:   u.ID,
+			blocks:         blocks,
+			boundingRanges: brs,
 		}
 	}
 
@@ -100,15 +115,15 @@ func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *Autho
 //
 // Mode B (Strict):
 //   - Writes rejected (0x01).
-//   - Reads: if covering block has Timeout → 0x0B.
-//           if covering block has LastExceptionCode != 0 → forward exception.
-//           otherwise serve normally.
+//   - Reads outside bounding range → 0x02.
+//   - Reads in a hole (within bounding range, not in a segment) → 0x02.
+//   - Reads in a covered segment: if unprimed or timeout → 0x0B;
+//     if exception recorded → forward exception; otherwise serve normally.
 //
 // Mode C (Buffered):
 //   - Writes rejected (0x01).
-//   - Reads always served; block health is not consulted.
-//
-// For read requests: if no read block fully covers the request range, 0x02 is returned.
+//   - Reads outside bounding range → 0x02.
+//   - Reads in a hole or covered segment → always serve (health not consulted).
 func (r *AuthorityRegistry) Enforce(port, unitID uint16, fc uint8, address, quantity uint16) ([]byte, bool) {
 	entry, ok := r.targets[targetKey{port: port, unitID: unitID}]
 	if !ok {
@@ -124,11 +139,28 @@ func (r *AuthorityRegistry) Enforce(port, unitID uint16, fc uint8, address, quan
 	}
 
 	if isReadFC(fc) {
-		covering := findCoveringBlocks(entry.blocks, fc, address, quantity)
-		if covering == nil {
+		// Check whether the request falls within the bounding range for this FC.
+		br, hasBR := entry.boundingRanges[fc]
+		reqEnd := uint32(address) + uint32(quantity)
+		if !hasBR || uint32(address) < uint32(br.start) || reqEnd > uint32(br.end) {
+			// Outside bounding range: always 0x02 regardless of mode.
 			return BuildExceptionPDU(fc, 0x02), true
 		}
 
+		// Within bounding range: check segment coverage.
+		covering := findCoveringBlocks(entry.blocks, fc, address, quantity)
+		if covering == nil {
+			// Hole: within bounding range but not covered by any segment.
+			switch entry.mode {
+			case config.TargetModeA, config.TargetModeC:
+				// Serve zero-filled response from memory.
+				return nil, false
+			default: // TargetModeB
+				return BuildExceptionPDU(fc, 0x02), true
+			}
+		}
+
+		// Fully covered by segments.
 		switch entry.mode {
 		case config.TargetModeA, config.TargetModeC:
 			// Always serve reads; health is not consulted.
@@ -138,7 +170,11 @@ func (r *AuthorityRegistry) Enforce(port, unitID uint16, fc uint8, address, quan
 			for _, blk := range covering {
 				timeout, _, excCode, found := r.health.GetBlockHealth(entry.replicatorID, blk.blockIdx)
 				if !found {
-					continue // no health data yet — allow
+					// Unprimed block (no successful poll yet): mode B must not serve
+					// potentially stale or zero memory as if it were valid device data.
+					// 0x0B (Gateway Target Device Failed to Respond) signals to clients
+					// that the data source is unavailable, consistent with timeout behavior.
+					return BuildExceptionPDU(fc, 0x0B), true
 				}
 				if timeout {
 					return BuildExceptionPDU(fc, 0x0B), true

@@ -3,8 +3,6 @@ package config
 
 import (
 	"fmt"
-	"net"
-	"strconv"
 	"strings"
 )
 
@@ -17,148 +15,8 @@ func Validate(cfg *Config) error {
 		return fmt.Errorf("config is nil")
 	}
 
-	if err := validateServer(cfg); err != nil {
-		return err
-	}
-
 	if err := validateReplicator(cfg); err != nil {
 		return err
-	}
-
-	return nil
-}
-
-// --------------------
-// Server validation
-// --------------------
-
-func validateServer(cfg *Config) error {
-	if len(cfg.Server.Listeners) == 0 {
-		return fmt.Errorf("server.listeners: at least one listener required")
-	}
-
-	seenIDs := make(map[string]struct{})
-	seenAddrs := make(map[string]struct{})
-
-	// Track all (port, unit_id) pairs to detect duplicates
-	type memKey struct {
-		port   uint16
-		unitID uint16
-	}
-	seenMem := make(map[memKey]string)
-
-	for i, l := range cfg.Server.Listeners {
-		if l.ID == "" {
-			return fmt.Errorf("server.listeners[%d]: id is required", i)
-		}
-		if _, ok := seenIDs[l.ID]; ok {
-			return fmt.Errorf("server.listeners[%d]: duplicate id %q", i, l.ID)
-		}
-		seenIDs[l.ID] = struct{}{}
-
-		if strings.TrimSpace(l.Listen) == "" {
-			return fmt.Errorf("server.listeners[%d] (%s): listen is required", i, l.ID)
-		}
-		if _, ok := seenAddrs[l.Listen]; ok {
-			return fmt.Errorf("server.listeners[%d] (%s): duplicate listen address %q", i, l.ID, l.Listen)
-		}
-		seenAddrs[l.Listen] = struct{}{}
-
-		port, err := parseListenPort(l.Listen)
-		if err != nil {
-			return fmt.Errorf("server.listeners[%d] (%s): invalid listen %q: %w", i, l.ID, l.Listen, err)
-		}
-
-		if len(l.Memory) == 0 {
-			return fmt.Errorf("server.listeners[%d] (%s): at least one memory block required", i, l.ID)
-		}
-
-		for j, m := range l.Memory {
-			path := fmt.Sprintf("server.listeners[%d] (%s).memory[%d]", i, l.ID, j)
-
-			if m.UnitID == 0 {
-				return fmt.Errorf("%s: unit_id must be > 0", path)
-			}
-			if m.UnitID > 0xFF {
-				return fmt.Errorf("%s: unit_id must be <= 255", path)
-			}
-
-			if err := validateAreaDef(path, "coils", m.Coils); err != nil {
-				return err
-			}
-			if err := validateAreaDef(path, "discrete_inputs", m.DiscreteInputs); err != nil {
-				return err
-			}
-			if err := validateAreaDef(path, "holding_registers", m.HoldingRegs); err != nil {
-				return err
-			}
-			if err := validateAreaDef(path, "input_registers", m.InputRegs); err != nil {
-				return err
-			}
-
-			if err := validateStateSealingDef(path, m); err != nil {
-				return err
-			}
-
-			mk := memKey{port: port, unitID: m.UnitID}
-			if prev, ok := seenMem[mk]; ok {
-				return fmt.Errorf(
-					"memory identity conflict: (port=%d unit_id=%d) defined in %s and %s",
-					port, m.UnitID, prev, path,
-				)
-			}
-			seenMem[mk] = path
-		}
-
-		// A: Detect overlapping address ranges per area type within the same listener.
-		// Two memory definitions (regardless of unit_id) must not use overlapping ranges
-		// for the same area type; this makes overlap explicit even across different units.
-		if err := validateMemoryAreaOverlap(l); err != nil {
-			return fmt.Errorf("server.listeners[%d] (%s): %w", i, l.ID, err)
-		}
-	}
-
-	return nil
-}
-
-func validateAreaDef(path, name string, a AreaDef) error {
-	if a.Count == 0 {
-		return nil
-	}
-	end := uint32(a.Start) + uint32(a.Count)
-	if end > 0x10000 {
-		return fmt.Errorf(
-			"%s.%s: start(%d)+count(%d) exceeds 16-bit address space",
-			path, name, a.Start, a.Count,
-		)
-	}
-	return nil
-}
-
-func validateStateSealingDef(path string, m MemoryDef) error {
-	if m.StateSealing == nil {
-		return nil
-	}
-
-	area := strings.ToLower(strings.TrimSpace(m.StateSealing.Area))
-	if area != "coil" {
-		return fmt.Errorf("%s.state_sealing.area must be 'coil'", path)
-	}
-
-	if m.Coils.Count == 0 {
-		return fmt.Errorf("%s.state_sealing requires coils to be allocated", path)
-	}
-
-	start := m.Coils.Start
-	count := m.Coils.Count
-	addr := m.StateSealing.Address
-	endExclusive := uint32(start) + uint32(count)
-
-	if uint32(addr) < uint32(start) || uint32(addr) >= endExclusive {
-		return fmt.Errorf(
-			"%s.state_sealing.address (%d) out of bounds for coils [%d..%d)",
-			path, addr, start, uint16(endExclusive),
-		)
 	}
 
 	return nil
@@ -168,31 +26,9 @@ func validateStateSealingDef(path string, m MemoryDef) error {
 // Replicator validation
 // --------------------
 
-// memSizeKey identifies a memory block by listener and unit ID.
-// Used to look up allocated memory sizes during cross-unit validation.
-type memSizeKey struct {
-	listenerID string
-	unitID     uint16
-}
-
 func validateReplicator(cfg *Config) error {
-	// Build a lookup: listenerID → port
-	listenerPort := make(map[string]uint16)
-	for _, l := range cfg.Server.Listeners {
-		port, err := parseListenPort(l.Listen)
-		if err != nil {
-			// Already validated in validateServer
-			continue
-		}
-		listenerPort[l.ID] = port
-	}
-
-	// Build holding-register count lookup per (listenerID, unitID) for status capacity check.
-	memHRCount := make(map[memSizeKey]uint16)
-	for _, l := range cfg.Server.Listeners {
-		for _, m := range l.Memory {
-			memHRCount[memSizeKey{listenerID: l.ID, unitID: m.UnitID}] = m.HoldingRegs.Count
-		}
+	if len(cfg.Replicator.Units) == 0 {
+		return fmt.Errorf("replicator.units: at least one unit required")
 	}
 
 	seenIDs := make(map[string]struct{})
@@ -206,28 +42,25 @@ func validateReplicator(cfg *Config) error {
 		}
 		seenIDs[u.ID] = struct{}{}
 
-		if err := validateUnitConfig(u, listenerPort); err != nil {
+		if err := validateUnitConfig(u); err != nil {
 			return fmt.Errorf("replicator.units[%d] (%s): %w", i, u.ID, err)
 		}
 	}
 
-	// B: Detect replicator write conflicts.
-	// Multiple units targeting the same (listener_id, unit_id) must not issue reads
-	// for the same FC with overlapping address ranges, as they would produce
-	// conflicting writes to the same destination registers.
+	// Detect replicator write conflicts: overlapping read ranges for same (port, unit_id, FC).
 	if err := validateReplicatorWriteConflicts(cfg); err != nil {
 		return err
 	}
 
-	// C: Detect status slot conflicts and validate slot capacity.
-	if err := validateStatusSlots(cfg, memHRCount); err != nil {
+	// Detect status slot conflicts and status_unit_id vs data unit_id collisions.
+	if err := validateStatusSlots(cfg); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func validateUnitConfig(u UnitConfig, listenerPort map[string]uint16) error {
+func validateUnitConfig(u UnitConfig) error {
 	// Source
 	if strings.TrimSpace(u.Source.Endpoint) == "" {
 		return fmt.Errorf("source.endpoint is required")
@@ -263,117 +96,48 @@ func validateUnitConfig(u UnitConfig, listenerPort map[string]uint16) error {
 	}
 
 	// Target
-	t := u.Target
-	if strings.TrimSpace(t.ListenerID) == "" {
-		return fmt.Errorf("target.listener_id is required")
+	target := u.Target
+	if target.Port == 0 {
+		return fmt.Errorf("target.port must be > 0")
 	}
-	if _, ok := listenerPort[t.ListenerID]; !ok {
-		return fmt.Errorf("target.listener_id %q: no matching listener", t.ListenerID)
-	}
-	if t.UnitID == 0 {
+	if target.UnitID == 0 {
 		return fmt.Errorf("target.unit_id must be > 0")
 	}
-	if t.UnitID > 0xFF {
+	if target.UnitID > 0xFF {
 		return fmt.Errorf("target.unit_id must be <= 255")
 	}
 
 	// Status block validation
-	if u.Source.StatusSlot != nil {
-		if t.StatusUnitID == nil {
-			return fmt.Errorf("source.status_slot is set but target.status_unit_id is not")
+	if target.StatusSlot != nil {
+		if target.StatusUnitID == nil {
+			return fmt.Errorf("target.status_slot is set but target.status_unit_id is not")
 		}
-		if *t.StatusUnitID == 0 {
+		if *target.StatusUnitID == 0 {
 			return fmt.Errorf("target.status_unit_id must be > 0")
 		}
-		if *t.StatusUnitID > 0xFF {
+		if *target.StatusUnitID > 0xFF {
 			return fmt.Errorf("target.status_unit_id must be <= 255")
 		}
 	}
 
 	// Target mode validation
-	switch t.Mode {
+	switch target.Mode {
 	case TargetModeA, TargetModeB, TargetModeC:
 		// valid
 	default:
-		return fmt.Errorf("target.mode: unknown value %q (valid: A, B, C)", t.Mode)
+		return fmt.Errorf("target.mode: unknown value %q (valid: A, B, C)", target.Mode)
 	}
 
-	return nil
-}
-
-// validateMemoryAreaOverlap checks that no two memory definitions with the same
-// unit_id under the same listener have overlapping address ranges for the same
-// area type.  Since (port, unit_id) uniqueness is enforced separately, this check
-// is future-proof for configs that declare ranges in separate blocks per unit.
-func validateMemoryAreaOverlap(l ListenerConfig) error {
-	type areaEntry struct {
-		unitID uint16
-		start  uint16
-		end    uint16 // exclusive
-		path   string
-	}
-
-	// collect compares all entries for a given area type, restricting overlap
-	// detection to entries that share the same unit_id.
-	collect := func(areaName string, defs []areaEntry) error {
-		for i := 0; i < len(defs); i++ {
-			for j := i + 1; j < len(defs); j++ {
-				a, b := defs[i], defs[j]
-				if a.unitID != b.unitID {
-					// Different Modbus unit IDs represent independent address spaces.
-					continue
-				}
-				if a.start < b.end && b.start < a.end {
-					return fmt.Errorf(
-						"memory area overlap: unit_id=%d, area=%s: %s [%d,%d) overlaps %s [%d,%d)",
-						a.unitID, areaName, a.path, a.start, a.end, b.path, b.start, b.end,
-					)
-				}
-			}
-		}
-		return nil
-	}
-
-	var coils, di, hr, ir []areaEntry
-	for j, m := range l.Memory {
-		path := fmt.Sprintf("memory[%d] (unit_id=%d)", j, m.UnitID)
-		if m.Coils.Count > 0 {
-			coils = append(coils, areaEntry{m.UnitID, m.Coils.Start, m.Coils.Start + m.Coils.Count, path})
-		}
-		if m.DiscreteInputs.Count > 0 {
-			di = append(di, areaEntry{m.UnitID, m.DiscreteInputs.Start, m.DiscreteInputs.Start + m.DiscreteInputs.Count, path})
-		}
-		if m.HoldingRegs.Count > 0 {
-			hr = append(hr, areaEntry{m.UnitID, m.HoldingRegs.Start, m.HoldingRegs.Start + m.HoldingRegs.Count, path})
-		}
-		if m.InputRegs.Count > 0 {
-			ir = append(ir, areaEntry{m.UnitID, m.InputRegs.Start, m.InputRegs.Start + m.InputRegs.Count, path})
-		}
-	}
-
-	for _, check := range []struct {
-		name    string
-		entries []areaEntry
-	}{
-		{"coils", coils},
-		{"discrete_inputs", di},
-		{"holding_registers", hr},
-		{"input_registers", ir},
-	} {
-		if err := collect(check.name, check.entries); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
 // validateReplicatorWriteConflicts detects when multiple replicator units target
-// the same (listener_id, unit_id) and issue reads for the same FC with overlapping
+// the same (port, unit_id) and issue reads for the same FC with overlapping
 // address ranges.  Such configurations produce non-deterministic write outcomes.
 func validateReplicatorWriteConflicts(cfg *Config) error {
 	type writeTarget struct {
-		listenerID string
-		unitID     uint16
+		port   uint16
+		unitID uint16
 	}
 	type readEntry struct {
 		fc      uint8
@@ -385,7 +149,7 @@ func validateReplicatorWriteConflicts(cfg *Config) error {
 
 	targetReads := make(map[writeTarget][]readEntry)
 	for i, u := range cfg.Replicator.Units {
-		wt := writeTarget{listenerID: u.Target.ListenerID, unitID: u.Target.UnitID}
+		wt := writeTarget{port: u.Target.Port, unitID: u.Target.UnitID}
 		for _, r := range u.Reads {
 			targetReads[wt] = append(targetReads[wt], readEntry{
 				fc:      r.FC,
@@ -411,10 +175,10 @@ func validateReplicatorWriteConflicts(cfg *Config) error {
 				if a.start < b.end && b.start < a.end {
 					return fmt.Errorf(
 						"replicator write conflict: units %q and %q both write FC%d "+
-							"addresses [%d,%d) and [%d,%d) to target (listener=%s, unit_id=%d)",
+							"addresses [%d,%d) and [%d,%d) to target (port=%d, unit_id=%d)",
 						a.unitID, b.unitID,
 						a.fc, a.start, a.end, b.start, b.end,
-						wt.listenerID, wt.unitID,
+						wt.port, wt.unitID,
 					)
 				}
 			}
@@ -424,63 +188,62 @@ func validateReplicatorWriteConflicts(cfg *Config) error {
 }
 
 // validateStatusSlots ensures:
-//   - No two replicator units share the same status_slot.
-//   - Each status_slot fits within the allocated status memory:
-//     status_memory.holding_registers.count >= (slot+1)*30
-func validateStatusSlots(cfg *Config, memHRCount map[memSizeKey]uint16) error {
-	seenSlots := make(map[uint16]string) // slot → first unit ID that claimed it
+//   - No two replicator units on the same (port, status_unit_id) share the same status_slot.
+//   - No status_unit_id equals a data unit_id on the same port.
+func validateStatusSlots(cfg *Config) error {
+	// Collect all data unit IDs per port.
+	dataUnitsByPort := make(map[uint16]map[uint16]struct{})
+	for _, u := range cfg.Replicator.Units {
+		port := u.Target.Port
+		if dataUnitsByPort[port] == nil {
+			dataUnitsByPort[port] = make(map[uint16]struct{})
+		}
+		dataUnitsByPort[port][u.Target.UnitID] = struct{}{}
+	}
+
+	// slotKey identifies a status slot namespace: (port, status_unit_id).
+	type slotKey struct {
+		port         uint16
+		statusUnitID uint16
+	}
+	// seenSlots maps (port, status_unit_id) → (slot → first unit ID that claimed it).
+	seenSlots := make(map[slotKey]map[uint16]string)
 
 	for i, u := range cfg.Replicator.Units {
-		if u.Source.StatusSlot == nil {
+		if u.Target.StatusSlot == nil {
 			continue
 		}
-		slot := *u.Source.StatusSlot
-
-		if prev, ok := seenSlots[slot]; ok {
-			return fmt.Errorf(
-				"replicator.units[%d] (%s): status_slot %d already used by unit %q",
-				i, u.ID, slot, prev,
-			)
-		}
-		seenSlots[slot] = u.ID
-
-		// Check that the status memory can accommodate this slot.
-		// Each slot occupies 30 consecutive holding registers.
 		if u.Target.StatusUnitID == nil {
 			continue // already caught by per-unit validation
 		}
-		key := memSizeKey{listenerID: u.Target.ListenerID, unitID: *u.Target.StatusUnitID}
-		count := memHRCount[key]
-		required := uint32(slot+1) * 30
-		if uint32(count) < required {
+
+		port := u.Target.Port
+		statusUID := *u.Target.StatusUnitID
+		slot := *u.Target.StatusSlot
+
+		// status_unit_id must not equal any data unit_id on the same port.
+		if dataUnits, ok := dataUnitsByPort[port]; ok {
+			if _, conflict := dataUnits[statusUID]; conflict {
+				return fmt.Errorf(
+					"replicator.units[%d] (%s): target.status_unit_id %d conflicts with "+
+						"a data unit_id on port %d",
+					i, u.ID, statusUID, port,
+				)
+			}
+		}
+
+		sk := slotKey{port: port, statusUnitID: statusUID}
+		if seenSlots[sk] == nil {
+			seenSlots[sk] = make(map[uint16]string)
+		}
+		if prev, exists := seenSlots[sk][slot]; exists {
 			return fmt.Errorf(
-				"replicator.units[%d] (%s): status_slot %d requires status memory "+
-					"holding_registers.count >= %d (got %d)",
-				i, u.ID, slot, required, count,
+				"replicator.units[%d] (%s): status_slot %d already used by unit %q "+
+					"on (port=%d, status_unit_id=%d)",
+				i, u.ID, slot, prev, port, statusUID,
 			)
 		}
+		seenSlots[sk][slot] = u.ID
 	}
 	return nil
-}
-
-// --------------------
-// Helpers
-// --------------------
-
-// parseListenPort parses "host:port" and returns the port as uint16.
-func parseListenPort(listen string) (uint16, error) {
-	_, portStr, err := net.SplitHostPort(listen)
-	if err != nil {
-		return 0, fmt.Errorf("invalid listen address (expected host:port): %w", err)
-	}
-
-	n, err := strconv.Atoi(portStr)
-	if err != nil {
-		return 0, fmt.Errorf("invalid port %q: %w", portStr, err)
-	}
-	if n < 1 || n > 65535 {
-		return 0, fmt.Errorf("port out of range: %d", n)
-	}
-
-	return uint16(n), nil
 }

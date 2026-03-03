@@ -61,24 +61,13 @@ func (m *mockBlockHealthReader) setException(unitID string, blockIdx int, code b
 // target: port=502, unitID=1, mode=given, reads=[{FC4, addr=0, qty=10}]
 func buildTestRegistry(mode string, health BlockHealthReader) *AuthorityRegistry {
 	cfg := &config.Config{
-		Server: config.ServerConfig{
-			Listeners: []config.ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []config.MemoryDef{
-						{UnitID: 1, HoldingRegs: config.AreaDef{Start: 0, Count: 10}},
-					},
-				},
-			},
-		},
 		Replicator: config.ReplicatorConfig{
 			Units: []config.UnitConfig{
 				{
 					ID:     "unit1",
 					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
 					Reads:  []config.ReadConfig{{FC: 4, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: mode},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: mode},
 				},
 			},
 		},
@@ -89,17 +78,6 @@ func buildTestRegistry(mode string, health BlockHealthReader) *AuthorityRegistry
 // buildTwoBlockRegistry builds a registry with two FC4 blocks: [0,10) and [10,10).
 func buildTwoBlockRegistry(mode string, health BlockHealthReader) *AuthorityRegistry {
 	cfg := &config.Config{
-		Server: config.ServerConfig{
-			Listeners: []config.ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []config.MemoryDef{
-						{UnitID: 1, InputRegs: config.AreaDef{Start: 0, Count: 20}},
-					},
-				},
-			},
-		},
 		Replicator: config.ReplicatorConfig{
 			Units: []config.UnitConfig{
 				{
@@ -109,7 +87,7 @@ func buildTwoBlockRegistry(mode string, health BlockHealthReader) *AuthorityRegi
 						{FC: 4, Address: 0, Quantity: 10, IntervalMs: 200},   // block 0: [0,10)
 						{FC: 4, Address: 10, Quantity: 10, IntervalMs: 5000}, // block 1: [10,20)
 					},
-					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: mode},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: mode},
 				},
 			},
 		},
@@ -477,24 +455,13 @@ func sendAndReceive(t *testing.T, authority *AuthorityRegistry, store core.Store
 // buildFC3Registry builds a registry covering FC3 (holding registers) for unit 1 on port 502.
 func buildFC3Registry(mode string, health BlockHealthReader) *AuthorityRegistry {
 	cfg := &config.Config{
-		Server: config.ServerConfig{
-			Listeners: []config.ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []config.MemoryDef{
-						{UnitID: 1, HoldingRegs: config.AreaDef{Start: 0, Count: 10}},
-					},
-				},
-			},
-		},
 		Replicator: config.ReplicatorConfig{
 			Units: []config.UnitConfig{
 				{
 					ID:     "unit1",
 					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
 					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: mode},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: mode},
 				},
 			},
 		},
@@ -572,24 +539,13 @@ func TestHandleConnModeCWriteRejected(t *testing.T) {
 // minimalValidConfig returns a minimal valid Config suitable for testing Validate().
 func minimalValidConfig() *config.Config {
 	return &config.Config{
-		Server: config.ServerConfig{
-			Listeners: []config.ListenerConfig{
-				{
-					ID:     "main",
-					Listen: ":502",
-					Memory: []config.MemoryDef{
-						{UnitID: 1, HoldingRegs: config.AreaDef{Start: 0, Count: 10}},
-					},
-				},
-			},
-		},
 		Replicator: config.ReplicatorConfig{
 			Units: []config.UnitConfig{
 				{
 					ID:     "plc1",
 					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
 					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: config.TargetConfig{ListenerID: "main", UnitID: 1, Mode: config.TargetModeB},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: config.TargetModeB},
 				},
 			},
 		},
