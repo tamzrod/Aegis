@@ -230,6 +230,27 @@ func TestEnforceReadModeAAlwaysServes(t *testing.T) {
 // New spec tests
 // --------------------
 
+// buildHoleRegistry builds a registry for unit 1 on port 502 with two non-adjacent
+// FC3 blocks: [0,5) and [15,5). Bounding range = [0,20); hole = [5,15).
+func buildHoleRegistry(mode string, health BlockHealthReader) *AuthorityRegistry {
+	cfg := &config.Config{
+		Replicator: config.ReplicatorConfig{
+			Units: []config.UnitConfig{
+				{
+					ID:     "unit1",
+					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads: []config.ReadConfig{
+						{FC: 3, Address: 0, Quantity: 5, IntervalMs: 1000},  // block 0: [0,5)
+						{FC: 3, Address: 15, Quantity: 5, IntervalMs: 1000}, // block 1: [15,20)
+					},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: mode},
+				},
+			},
+		},
+	}
+	return BuildAuthorityRegistry(cfg, health)
+}
+
 // TestTwoFC4BlocksDifferentIntervals verifies config with two FC4 blocks at different
 // intervals builds correctly with two separate block entries in the registry.
 func TestTwoFC4BlocksDifferentIntervals(t *testing.T) {
@@ -339,6 +360,123 @@ func TestPartialOverlapReturns0x02(t *testing.T) {
 	}
 	if len(pdu) != 2 || pdu[0] != 0x04|0x80 || pdu[1] != 0x02 {
 		t.Errorf("expected exception 0x02, got %v", pdu)
+	}
+}
+
+// TestModeBUnprimedBlockReturns0x0B verifies that mode B returns 0x0B when the
+// covering block has never been successfully polled (no health record exists yet).
+func TestModeBUnprimedBlockReturns0x0B(t *testing.T) {
+	// No health data set at all — block is unprimed.
+	health := newMockHealth()
+	reg := buildTestRegistry(config.TargetModeB, health)
+	pdu, rejected := reg.Enforce(502, 1, 4, 0, 5)
+	if !rejected {
+		t.Error("mode B + unprimed block: read should be blocked with 0x0B")
+		return
+	}
+	if len(pdu) != 2 || pdu[0] != 0x04|0x80 || pdu[1] != 0x0B {
+		t.Errorf("expected exception 0x0B for unprimed block, got %v", pdu)
+	}
+}
+
+// TestModeBHoleReturns0x02 verifies that mode B returns 0x02 for a read that lands
+// within the bounding range but in a gap between configured segments.
+func TestModeBHoleReturns0x02(t *testing.T) {
+	health := newMockHealth()
+	health.setHealthy("unit1", 0)
+	health.setHealthy("unit1", 1)
+	reg := buildHoleRegistry(config.TargetModeB, health)
+	// Bounding range is [0,20). Blocks cover [0,5) and [15,20). Hole = [5,15).
+	// Request [8,5) lands entirely in the hole.
+	pdu, rejected := reg.Enforce(502, 1, 3, 8, 5)
+	if !rejected {
+		t.Error("mode B + hole: read should be rejected with 0x02")
+		return
+	}
+	if len(pdu) != 2 || pdu[0] != 0x03|0x80 || pdu[1] != 0x02 {
+		t.Errorf("expected exception 0x02 for hole in mode B, got %v", pdu)
+	}
+}
+
+// TestModeAHoleAllowed verifies that mode A allows reads that land in a hole
+// within the bounding range (caller will receive zeros from the store).
+func TestModeAHoleAllowed(t *testing.T) {
+	health := newMockHealth()
+	reg := buildHoleRegistry(config.TargetModeA, health)
+	pdu, rejected := reg.Enforce(502, 1, 3, 8, 5)
+	if rejected {
+		t.Errorf("mode A + hole: read should be allowed (serve zeros), got exception PDU: %v", pdu)
+	}
+}
+
+// TestModeCHoleAllowed verifies that mode C allows reads that land in a hole
+// within the bounding range (caller will receive zeros from the store).
+func TestModeCHoleAllowed(t *testing.T) {
+	health := newMockHealth()
+	reg := buildHoleRegistry(config.TargetModeC, health)
+	pdu, rejected := reg.Enforce(502, 1, 3, 8, 5)
+	if rejected {
+		t.Errorf("mode C + hole: read should be allowed (serve zeros), got exception PDU: %v", pdu)
+	}
+}
+
+// TestMultiUnitSameSurfaceMergesBlocks verifies that when two replicator units target
+// the same (port, unit_id) surface with non-overlapping reads, both units' blocks
+// are merged into a single registry entry.  Previously the second unit's data would
+// silently overwrite the first unit's blocks, making the first unit's address range
+// appear as uncovered (hole) in mode B.
+func TestMultiUnitSameSurfaceMergesBlocks(t *testing.T) {
+	// unit1 covers FC3 [0,10); unit2 covers FC3 [20,10) — non-overlapping, same surface.
+	cfg := &config.Config{
+		Replicator: config.ReplicatorConfig{
+			Units: []config.UnitConfig{
+				{
+					ID:     "unit1",
+					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: config.TargetModeB},
+				},
+				{
+					ID:     "unit2",
+					Source: config.SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
+					Reads:  []config.ReadConfig{{FC: 3, Address: 20, Quantity: 10, IntervalMs: 1000}},
+					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: config.TargetModeB},
+				},
+			},
+		},
+	}
+	health := newMockHealth()
+	health.setHealthy("unit1", 0)
+	health.setHealthy("unit2", 0)
+	reg := BuildAuthorityRegistry(cfg, health)
+
+	entry, ok := reg.targets[targetKey{port: 502, unitID: 1}]
+	if !ok {
+		t.Fatal("expected entry for (502, 1)")
+	}
+	if len(entry.blocks) != 2 {
+		t.Fatalf("expected 2 merged blocks, got %d", len(entry.blocks))
+	}
+
+	// Bounding range should span [0, 30).
+	br, ok := entry.boundingRanges[3]
+	if !ok {
+		t.Fatal("expected bounding range for FC3")
+	}
+	if br.start != 0 || br.end != 30 {
+		t.Errorf("expected bounding range [0, 30), got [%d, %d)", br.start, br.end)
+	}
+
+	// Read from unit1's range [2,7) — should succeed (unit1 healthy).
+	pdu, rejected := reg.Enforce(502, 1, 3, 2, 5)
+	if rejected {
+		t.Errorf("unit1 range [2,7): should succeed after merge, got exception PDU: %v", pdu)
+	}
+
+	// Read from unit2's range [22,27) — should succeed (unit2 healthy).
+	pdu, rejected = reg.Enforce(502, 1, 3, 22, 5)
+	if rejected {
+		t.Errorf("unit2 range [22,27): should succeed after merge, got exception PDU: %v", pdu)
 	}
 }
 

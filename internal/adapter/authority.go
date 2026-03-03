@@ -16,11 +16,14 @@ type BlockHealthReader interface {
 }
 
 // targetReadBlock describes one configured read block for a replicator target.
+// replicatorID identifies which replicator unit owns this block; used for health lookups
+// since block indices are scoped per replicator unit, not per memory surface.
 type targetReadBlock struct {
-	blockIdx int
-	fc       uint8
-	address  uint16
-	quantity uint16
+	replicatorID string // which replicator unit owns this block (for health lookups)
+	blockIdx     int    // index within that replicator unit's reads list
+	fc           uint8
+	address      uint16
+	quantity     uint16
 }
 
 // boundingRange is the inclusive address range [start, end) covering all read blocks
@@ -31,11 +34,11 @@ type boundingRange struct {
 }
 
 // targetEntry holds the authority configuration for one (port, unitID) pair.
+// Multiple replicator units may contribute blocks to the same surface; all are merged here.
 type targetEntry struct {
-	mode           string            // "A", "B", or "C"
-	replicatorID   string            // replicator unit string ID (for health lookups)
-	blocks         []targetReadBlock // configured read blocks for this target
-	boundingRanges map[uint8]boundingRange // fc → bounding range derived from read blocks
+	mode           string                  // "A", "B", or "C" — from the first unit that registered this surface
+	blocks         []targetReadBlock       // all read blocks from all units targeting this surface
+	boundingRanges map[uint8]boundingRange // fc → bounding range derived from all read blocks
 }
 
 type targetKey struct {
@@ -53,6 +56,10 @@ type AuthorityRegistry struct {
 
 // BuildAuthorityRegistry constructs an AuthorityRegistry from the validated config.
 // Assumes config.Validate() has already passed.
+//
+// When multiple replicator units target the same (port, unit_id) surface (valid as long
+// as their reads do not overlap), their blocks and bounding ranges are merged into a
+// single entry. The mode of the first registered unit is used for the surface.
 func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *AuthorityRegistry {
 	targets := make(map[targetKey]targetEntry)
 
@@ -60,23 +67,25 @@ func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *Autho
 		port := u.Target.Port
 		key := targetKey{port: port, unitID: u.Target.UnitID}
 
-		blocks := make([]targetReadBlock, 0, len(u.Reads))
+		// Build this unit's blocks (each carries its own replicatorID for health lookups).
+		newBlocks := make([]targetReadBlock, 0, len(u.Reads))
 		for i, r := range u.Reads {
-			blocks = append(blocks, targetReadBlock{
-				blockIdx: i,
-				fc:       r.FC,
-				address:  r.Address,
-				quantity: r.Quantity,
+			newBlocks = append(newBlocks, targetReadBlock{
+				replicatorID: u.ID,
+				blockIdx:     i,
+				fc:           r.FC,
+				address:      r.Address,
+				quantity:     r.Quantity,
 			})
 		}
 
-		// Compute bounding ranges per FC.
-		brs := make(map[uint8]boundingRange)
+		// Compute bounding ranges for this unit's reads.
+		newBRs := make(map[uint8]boundingRange)
 		for _, r := range u.Reads {
 			end := r.Address + r.Quantity
-			br, exists := brs[r.FC]
+			br, exists := newBRs[r.FC]
 			if !exists {
-				brs[r.FC] = boundingRange{start: r.Address, end: end}
+				newBRs[r.FC] = boundingRange{start: r.Address, end: end}
 			} else {
 				if r.Address < br.start {
 					br.start = r.Address
@@ -84,15 +93,34 @@ func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *Autho
 				if end > br.end {
 					br.end = end
 				}
-				brs[r.FC] = br
+				newBRs[r.FC] = br
 			}
 		}
 
-		targets[key] = targetEntry{
-			mode:           u.Target.Mode,
-			replicatorID:   u.ID,
-			blocks:         blocks,
-			boundingRanges: brs,
+		if existing, ok := targets[key]; ok {
+			// Merge into existing entry: accumulate blocks and extend bounding ranges.
+			// The first unit's mode is kept; later units' modes are ignored.
+			existing.blocks = append(existing.blocks, newBlocks...)
+			for fc, br := range newBRs {
+				if existBR, ok := existing.boundingRanges[fc]; !ok {
+					existing.boundingRanges[fc] = br
+				} else {
+					if br.start < existBR.start {
+						existBR.start = br.start
+					}
+					if br.end > existBR.end {
+						existBR.end = br.end
+					}
+					existing.boundingRanges[fc] = existBR
+				}
+			}
+			targets[key] = existing
+		} else {
+			targets[key] = targetEntry{
+				mode:           u.Target.Mode,
+				blocks:         newBlocks,
+				boundingRanges: newBRs,
+			}
 		}
 	}
 
@@ -111,7 +139,7 @@ func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *Autho
 //
 // Mode A (Standalone):
 //   - Writes allowed.
-//   - Reads always served; block health is not consulted.
+//   - Reads always served within bounding range; block health is not consulted.
 //
 // Mode B (Strict):
 //   - Writes rejected (0x01).
@@ -168,7 +196,7 @@ func (r *AuthorityRegistry) Enforce(port, unitID uint16, fc uint8, address, quan
 
 		case config.TargetModeB:
 			for _, blk := range covering {
-				timeout, _, excCode, found := r.health.GetBlockHealth(entry.replicatorID, blk.blockIdx)
+				timeout, _, excCode, found := r.health.GetBlockHealth(blk.replicatorID, blk.blockIdx)
 				if !found {
 					// Unprimed block (no successful poll yet): mode B must not serve
 					// potentially stale or zero memory as if it were valid device data.
