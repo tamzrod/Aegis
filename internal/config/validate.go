@@ -47,8 +47,8 @@ func validateReplicator(cfg *Config) error {
 		}
 	}
 
-	// Detect replicator write conflicts: overlapping read ranges for same (port, unit_id, FC).
-	if err := validateReplicatorWriteConflicts(cfg); err != nil {
+	// Enforce the surface identity rule: each (port, unit_id) must belong to exactly one unit.
+	if err := validateTargetSurfaces(cfg); err != nil {
 		return err
 	}
 
@@ -131,58 +131,23 @@ func validateUnitConfig(u UnitConfig) error {
 	return nil
 }
 
-// validateReplicatorWriteConflicts detects when multiple replicator units target
-// the same (port, unit_id) and issue reads for the same FC with overlapping
-// address ranges.  Such configurations produce non-deterministic write outcomes.
-func validateReplicatorWriteConflicts(cfg *Config) error {
-	type writeTarget struct {
+// validateTargetSurfaces enforces the surface identity rule:
+// each (port, unit_id) pair must be assigned to exactly one replicator unit.
+func validateTargetSurfaces(cfg *Config) error {
+	type surfaceKey struct {
 		port   uint16
 		unitID uint16
 	}
-	type readEntry struct {
-		fc      uint8
-		start   uint16
-		end     uint16 // exclusive
-		unitIdx int
-		unitID  string
-	}
-
-	targetReads := make(map[writeTarget][]readEntry)
+	seen := make(map[surfaceKey]string) // key → first unit ID
 	for i, u := range cfg.Replicator.Units {
-		wt := writeTarget{port: u.Target.Port, unitID: u.Target.UnitID}
-		for _, r := range u.Reads {
-			targetReads[wt] = append(targetReads[wt], readEntry{
-				fc:      r.FC,
-				start:   r.Address,
-				end:     r.Address + r.Quantity,
-				unitIdx: i,
-				unitID:  u.ID,
-			})
+		sk := surfaceKey{port: u.Target.Port, unitID: u.Target.UnitID}
+		if prev, exists := seen[sk]; exists {
+			return fmt.Errorf(
+				"replicator.units[%d] (%s): duplicate target surface (port=%d, unit_id=%d) already assigned to unit %q",
+				i, u.ID, sk.port, sk.unitID, prev,
+			)
 		}
-	}
-
-	for wt, entries := range targetReads {
-		for i := 0; i < len(entries); i++ {
-			for j := i + 1; j < len(entries); j++ {
-				a, b := entries[i], entries[j]
-				if a.unitIdx == b.unitIdx {
-					// Same replicator unit — not a conflict between units.
-					continue
-				}
-				if a.fc != b.fc {
-					continue
-				}
-				if a.start < b.end && b.start < a.end {
-					return fmt.Errorf(
-						"replicator write conflict: units %q and %q both write FC%d "+
-							"addresses [%d,%d) and [%d,%d) to target (port=%d, unit_id=%d)",
-						a.unitID, b.unitID,
-						a.fc, a.start, a.end, b.start, b.end,
-						wt.port, wt.unitID,
-					)
-				}
-			}
-		}
+		seen[sk] = u.ID
 	}
 	return nil
 }

@@ -169,7 +169,7 @@ func TestValidateReadIntervalMsNegative(t *testing.T) {
 }
 
 func TestValidateReplicatorWriteConflict(t *testing.T) {
-	// Two units targeting the same (port, unit_id) with overlapping FC3 reads.
+	// Two units targeting the same (port, unit_id) — now rejected as a duplicate surface.
 	slot0 := uint16(0)
 	slot1 := uint16(1)
 	statusUID := uint16(255)
@@ -192,7 +192,34 @@ func TestValidateReplicatorWriteConflict(t *testing.T) {
 		},
 	}
 	if err := Validate(cfg); err == nil {
-		t.Error("expected write conflict error for overlapping FC3 reads to same target")
+		t.Error("expected error for two units targeting the same (port, unit_id) surface")
+	}
+}
+
+func TestDuplicateSurfaceRejected(t *testing.T) {
+	// Two units with non-overlapping reads targeting the same (port, unit_id).
+	// The old write-conflict check would not have caught this; the surface uniqueness
+	// rule must reject it unconditionally.
+	cfg := &Config{
+		Replicator: ReplicatorConfig{
+			Units: []UnitConfig{
+				{
+					ID:     "dev1",
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 1, Mode: TargetModeB},
+				},
+				{
+					ID:     "dev2",
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 100, Quantity: 10, IntervalMs: 1000}}, // non-overlapping
+					Target: TargetConfig{Port: 502, UnitID: 1, Mode: TargetModeB},              // same surface
+				},
+			},
+		},
+	}
+	if err := Validate(cfg); err == nil {
+		t.Error("expected error: duplicate target surface (port=502, unit_id=1) assigned to multiple devices")
 	}
 }
 

@@ -420,66 +420,6 @@ func TestModeCHoleAllowed(t *testing.T) {
 	}
 }
 
-// TestMultiUnitSameSurfaceMergesBlocks verifies that when two replicator units target
-// the same (port, unit_id) surface with non-overlapping reads, both units' blocks
-// are merged into a single registry entry.  Previously the second unit's data would
-// silently overwrite the first unit's blocks, making the first unit's address range
-// appear as uncovered (hole) in mode B.
-func TestMultiUnitSameSurfaceMergesBlocks(t *testing.T) {
-	// unit1 covers FC3 [0,10); unit2 covers FC3 [20,10) — non-overlapping, same surface.
-	cfg := &config.Config{
-		Replicator: config.ReplicatorConfig{
-			Units: []config.UnitConfig{
-				{
-					ID:     "unit1",
-					Source: config.SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
-					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: config.TargetModeB},
-				},
-				{
-					ID:     "unit2",
-					Source: config.SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
-					Reads:  []config.ReadConfig{{FC: 3, Address: 20, Quantity: 10, IntervalMs: 1000}},
-					Target: config.TargetConfig{Port: 502, UnitID: 1, Mode: config.TargetModeB},
-				},
-			},
-		},
-	}
-	health := newMockHealth()
-	health.setHealthy("unit1", 0)
-	health.setHealthy("unit2", 0)
-	reg := BuildAuthorityRegistry(cfg, health)
-
-	entry, ok := reg.targets[targetKey{port: 502, unitID: 1}]
-	if !ok {
-		t.Fatal("expected entry for (502, 1)")
-	}
-	if len(entry.blocks) != 2 {
-		t.Fatalf("expected 2 merged blocks, got %d", len(entry.blocks))
-	}
-
-	// Bounding range should span [0, 30).
-	br, ok := entry.boundingRanges[3]
-	if !ok {
-		t.Fatal("expected bounding range for FC3")
-	}
-	if br.start != 0 || br.end != 30 {
-		t.Errorf("expected bounding range [0, 30), got [%d, %d)", br.start, br.end)
-	}
-
-	// Read from unit1's range [2,7) — should succeed (unit1 healthy).
-	pdu, rejected := reg.Enforce(502, 1, 3, 2, 5)
-	if rejected {
-		t.Errorf("unit1 range [2,7): should succeed after merge, got exception PDU: %v", pdu)
-	}
-
-	// Read from unit2's range [22,27) — should succeed (unit2 healthy).
-	pdu, rejected = reg.Enforce(502, 1, 3, 22, 5)
-	if rejected {
-		t.Errorf("unit2 range [22,27): should succeed after merge, got exception PDU: %v", pdu)
-	}
-}
-
 // TestDefaultModeIsB verifies that when mode is omitted from config, Load sets it to "B".
 func TestDefaultModeIsB(t *testing.T) {
 	// Simulate loading without mode field (mode="").
