@@ -23,14 +23,25 @@ type BlockResult struct {
 	Registers []uint16 // FC 3, 4
 }
 
+// BlockUpdate carries the per-block health outcome for one poll cycle.
+// The poller emits one BlockUpdate per due block, whether it succeeded or failed.
+type BlockUpdate struct {
+	BlockIdx      int  // index in the unit's reads list
+	Success       bool
+	Timeout       bool
+	ExceptionCode byte // non-zero only when Success==false and Timeout==false
+}
+
 // PollResult is a snapshot produced by one poll cycle.
 // All-or-nothing: if Err is non-nil, Blocks is empty.
+// BlockUpdates carries per-block health info regardless of overall success/failure.
 type PollResult struct {
 	UnitID string
 	At     time.Time
 
-	Blocks []BlockResult
-	Err    error
+	Blocks       []BlockResult
+	Err          error
+	BlockUpdates []BlockUpdate // per-block health outcomes for due blocks
 }
 
 // TransportCounters holds lifetime transport instrumentation for a single polling unit.

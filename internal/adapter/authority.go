@@ -2,79 +2,50 @@
 package adapter
 
 import (
-	"encoding/binary"
+	"sort"
 
 	"github.com/tamzrod/Aegis/internal/config"
-	"github.com/tamzrod/Aegis/internal/core"
 )
 
-// statusBlockSize is the number of holding registers per device status block.
-// This mirrors engine.StatusSlotsPerDevice (= 30) and is protocol-locked.
-const statusBlockSize = 30
-
-// statusHealthOffset is the register offset within a status block where the
-// health code is stored. Mirrors engine.slotHealthCode (= 2).
-const statusHealthOffset uint16 = 2
-
-// healthOK is the health code indicating a healthy upstream device.
-// Mirrors engine.HealthOK (= 1).
-const healthOK uint16 = 1
-
-// HealthChecker reports whether a given (port, unitID) memory's upstream is healthy.
-type HealthChecker interface {
-	IsHealthyFor(port uint16, unitID uint16) bool
+// BlockHealthReader is the interface through which the adapter queries per-block health.
+// The concrete implementation lives in the engine package (engine.BlockHealthStore).
+// Using an interface avoids a circular import between adapter and engine.
+// Returns (timeout, consecutiveErrors, exceptionCode, found).
+type BlockHealthReader interface {
+	GetBlockHealth(unitID string, blockIdx int) (timeout bool, consecutiveErrors int, exceptionCode byte, found bool)
 }
 
-// statusEntry locates a single status block in the store for one data memory unit.
-type statusEntry struct {
-	statusPort   uint16
-	statusUnitID uint16
-	baseAddr     uint16 // = slot * statusBlockSize
+// targetReadBlock describes one configured read block for a replicator target.
+type targetReadBlock struct {
+	blockIdx int
+	fc       uint8
+	address  uint16
+	quantity uint16
 }
 
-type dataKey struct {
+// targetEntry holds the authority configuration for one (port, unitID) pair.
+type targetEntry struct {
+	mode         string            // "A", "B", or "C"
+	replicatorID string            // replicator unit string ID (for health lookups)
+	blocks       []targetReadBlock // configured read blocks for this target
+}
+
+type targetKey struct {
 	port   uint16
 	unitID uint16
 }
 
-// StoreHealthChecker reads health codes directly from the status plane in the store.
-// It is constructed from config by BuildHealthChecker.
-type StoreHealthChecker struct {
-	store   core.Store
-	entries map[dataKey][]statusEntry
+// AuthorityRegistry maps (port, unitID) pairs to their authority configuration.
+// It is built once at startup from config and is read-only at runtime.
+// It is not global: each entry is per-target (per replicator unit target).
+type AuthorityRegistry struct {
+	targets map[targetKey]targetEntry
+	health  BlockHealthReader
 }
 
-// IsHealthyFor returns true if all configured status blocks for (port, unitID)
-// report health == OK. Returns true if no status block is configured for the unit.
-func (c *StoreHealthChecker) IsHealthyFor(port uint16, unitID uint16) bool {
-	entries := c.entries[dataKey{port: port, unitID: unitID}]
-	if len(entries) == 0 {
-		return true
-	}
-	for _, e := range entries {
-		statusID := core.MemoryID{Port: e.statusPort, UnitID: e.statusUnitID}
-		mem, ok := c.store.Get(statusID)
-		if !ok {
-			// Status memory not present — skip check for this entry.
-			continue
-		}
-		buf := make([]byte, 2)
-		if err := mem.ReadRegs(core.AreaHoldingRegs, e.baseAddr+statusHealthOffset, 1, buf); err != nil {
-			// Cannot read health register — skip check for this entry.
-			continue
-		}
-		if binary.BigEndian.Uint16(buf) != healthOK {
-			return false
-		}
-	}
-	return true
-}
-
-// BuildHealthChecker constructs a HealthChecker from the validated config and an
-// already-built store.  Assumes Validate() has already passed.
-func BuildHealthChecker(cfg *config.Config, store core.Store) HealthChecker {
-	entries := make(map[dataKey][]statusEntry)
-
+// BuildAuthorityRegistry constructs an AuthorityRegistry from the validated config.
+// Assumes config.Validate() has already passed.
+func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *AuthorityRegistry {
 	listenerPort := make(map[string]uint16)
 	for _, l := range cfg.Server.Listeners {
 		port, err := config.ParseListenPort(l.Listen)
@@ -84,24 +55,154 @@ func BuildHealthChecker(cfg *config.Config, store core.Store) HealthChecker {
 		listenerPort[l.ID] = port
 	}
 
+	targets := make(map[targetKey]targetEntry)
+
 	for _, u := range cfg.Replicator.Units {
-		if u.Source.StatusSlot == nil || u.Target.StatusUnitID == nil {
-			continue
-		}
 		port, ok := listenerPort[u.Target.ListenerID]
 		if !ok {
 			continue
 		}
-		dk := dataKey{port: port, unitID: u.Target.UnitID}
-		e := statusEntry{
-			statusPort:   port,
-			statusUnitID: *u.Target.StatusUnitID,
-			baseAddr:     *u.Source.StatusSlot * statusBlockSize,
+		key := targetKey{port: port, unitID: u.Target.UnitID}
+
+		blocks := make([]targetReadBlock, 0, len(u.Reads))
+		for i, r := range u.Reads {
+			blocks = append(blocks, targetReadBlock{
+				blockIdx: i,
+				fc:       r.FC,
+				address:  r.Address,
+				quantity: r.Quantity,
+			})
 		}
-		entries[dk] = append(entries[dk], e)
+
+		targets[key] = targetEntry{
+			mode:         u.Target.Mode,
+			replicatorID: u.ID,
+			blocks:       blocks,
+		}
 	}
 
-	return &StoreHealthChecker{store: store, entries: entries}
+	return &AuthorityRegistry{
+		targets: targets,
+		health:  health,
+	}
+}
+
+// Enforce checks authority for an incoming Modbus request.
+// Returns (exception PDU, true) if the request must be rejected, or (nil, false)
+// if it may proceed.
+//
+// Authority is per-target: if no target is registered for (port, unitID), the
+// request is allowed through (e.g. for status-only memory units).
+//
+// Mode A (Standalone):
+//   - Writes allowed.
+//   - Reads always served; block health is not consulted.
+//
+// Mode B (Strict):
+//   - Writes rejected (0x01).
+//   - Reads: if covering block has Timeout → 0x0B.
+//           if covering block has LastExceptionCode != 0 → forward exception.
+//           otherwise serve normally.
+//
+// Mode C (Buffered):
+//   - Writes rejected (0x01).
+//   - Reads always served; block health is not consulted.
+//
+// For read requests: if no read block fully covers the request range, 0x02 is returned.
+func (r *AuthorityRegistry) Enforce(port, unitID uint16, fc uint8, address, quantity uint16) ([]byte, bool) {
+	entry, ok := r.targets[targetKey{port: port, unitID: unitID}]
+	if !ok {
+		// No registered target — allow through without authority enforcement.
+		return nil, false
+	}
+
+	if isWriteFC(fc) {
+		if entry.mode != config.TargetModeA {
+			return BuildExceptionPDU(fc, 0x01), true
+		}
+		return nil, false
+	}
+
+	if isReadFC(fc) {
+		covering := findCoveringBlocks(entry.blocks, fc, address, quantity)
+		if covering == nil {
+			return BuildExceptionPDU(fc, 0x02), true
+		}
+
+		switch entry.mode {
+		case config.TargetModeA, config.TargetModeC:
+			// Always serve reads; health is not consulted.
+			return nil, false
+
+		case config.TargetModeB:
+			for _, blk := range covering {
+				timeout, _, excCode, found := r.health.GetBlockHealth(entry.replicatorID, blk.blockIdx)
+				if !found {
+					continue // no health data yet — allow
+				}
+				if timeout {
+					return BuildExceptionPDU(fc, 0x0B), true
+				}
+				if excCode != 0 {
+					return BuildExceptionPDU(fc, excCode), true
+				}
+			}
+			return nil, false
+		}
+	}
+
+	return nil, false
+}
+
+// findCoveringBlocks returns the read blocks that together fully cover the
+// [address, address+quantity) range for the given FC.
+// Returns nil if coverage is incomplete (gap or no matching blocks).
+// Partial overlap without full coverage returns nil.
+func findCoveringBlocks(blocks []targetReadBlock, fc uint8, address, quantity uint16) []targetReadBlock {
+	reqStart := uint32(address)
+	reqEnd := uint32(address) + uint32(quantity)
+
+	// Collect overlapping blocks for the same FC.
+	var matching []targetReadBlock
+	for _, b := range blocks {
+		if b.fc != fc {
+			continue
+		}
+		bStart := uint32(b.address)
+		bEnd := bStart + uint32(b.quantity)
+		// Include block if it overlaps with the request range.
+		if bStart < reqEnd && bEnd > reqStart {
+			matching = append(matching, b)
+		}
+	}
+
+	if len(matching) == 0 {
+		return nil
+	}
+
+	// Sort by start address to check contiguous coverage.
+	sort.Slice(matching, func(i, j int) bool {
+		return matching[i].address < matching[j].address
+	})
+
+	// Verify the union of matching blocks covers the full request range.
+	coveredUntil := reqStart
+	for _, b := range matching {
+		bStart := uint32(b.address)
+		bEnd := bStart + uint32(b.quantity)
+		if bStart > coveredUntil {
+			return nil // gap in coverage
+		}
+		if bEnd > coveredUntil {
+			coveredUntil = bEnd
+		}
+	}
+
+	if coveredUntil < reqEnd {
+		return nil // request extends beyond coverage
+	}
+
+	return matching
 }
 
 // isWriteFC returns true for write function codes (FC 5, 6, 15, 16).
@@ -112,24 +213,4 @@ func isWriteFC(fc uint8) bool {
 // isReadFC returns true for read function codes (FC 1, 2, 3, 4).
 func isReadFC(fc uint8) bool {
 	return fc >= 1 && fc <= 4
-}
-
-// enforceAuthority checks the authority mode for the given request and returns an
-// exception PDU if the request must be rejected, or (nil, false) if it may proceed.
-//
-//   - Write FCs (5, 6, 15, 16): rejected with 0x01 unless mode == "standalone".
-//   - Read FCs (1, 2, 3, 4):    rejected with 0x0B in "strict" mode when health != OK.
-func enforceAuthority(mode string, fc uint8, port uint16, unitID uint16, health HealthChecker) ([]byte, bool) {
-	if isWriteFC(fc) {
-		if mode != config.AuthorityModeStandalone {
-			return BuildExceptionPDU(fc, 0x01), true
-		}
-		return nil, false
-	}
-	if isReadFC(fc) && mode == config.AuthorityModeStrict {
-		if !health.IsHealthyFor(port, unitID) {
-			return BuildExceptionPDU(fc, 0x0B), true
-		}
-	}
-	return nil, false
 }

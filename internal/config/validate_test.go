@@ -7,7 +7,6 @@ import (
 
 func validBaseConfig() *Config {
 	return &Config{
-		AuthorityMode: AuthorityModeStrict,
 		Server: ServerConfig{
 			Listeners: []ListenerConfig{
 				{
@@ -36,6 +35,7 @@ func validBaseConfig() *Config {
 					Target: TargetConfig{
 						ListenerID: "main",
 						UnitID:     1,
+						Mode:       TargetModeB,
 					},
 				},
 			},
@@ -43,46 +43,44 @@ func validBaseConfig() *Config {
 	}
 }
 
-func TestValidateAuthorityModeDefault(t *testing.T) {
-	// When AuthorityMode is empty (as if not set in YAML before Load normalises it),
-	// Validate should reject it. Load() sets the default; raw Config with "" is invalid.
+func TestValidateTargetModeB(t *testing.T) {
 	cfg := validBaseConfig()
-	cfg.AuthorityMode = ""
+	cfg.Replicator.Units[0].Target.Mode = TargetModeB
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected mode B to be valid, got: %v", err)
+	}
+}
+
+func TestValidateTargetModeA(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Replicator.Units[0].Target.Mode = TargetModeA
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected mode A to be valid, got: %v", err)
+	}
+}
+
+func TestValidateTargetModeC(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Replicator.Units[0].Target.Mode = TargetModeC
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected mode C to be valid, got: %v", err)
+	}
+}
+
+func TestValidateTargetModeInvalid(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.Replicator.Units[0].Target.Mode = "bogus"
 	if err := Validate(cfg); err == nil {
-		t.Error("expected error for empty authority_mode (default is applied by Load, not Validate)")
+		t.Error("expected error for invalid target mode value")
 	}
 }
 
-func TestValidateAuthorityModeStrictDefault(t *testing.T) {
-	// Load() sets "strict" as default. After Load+normalisation, Validate must accept "strict".
+func TestValidateTargetModeEmpty(t *testing.T) {
+	// Empty mode should fail — Load() sets the default, Validate() rejects empty.
 	cfg := validBaseConfig()
-	cfg.AuthorityMode = AuthorityModeStrict
-	if err := Validate(cfg); err != nil {
-		t.Errorf("expected strict to be valid, got: %v", err)
-	}
-}
-
-func TestValidateAuthorityModeStandalone(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.AuthorityMode = AuthorityModeStandalone
-	if err := Validate(cfg); err != nil {
-		t.Errorf("expected standalone to be valid, got: %v", err)
-	}
-}
-
-func TestValidateAuthorityModeBuffer(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.AuthorityMode = AuthorityModeBuffer
-	if err := Validate(cfg); err != nil {
-		t.Errorf("expected buffer to be valid, got: %v", err)
-	}
-}
-
-func TestValidateAuthorityModeInvalid(t *testing.T) {
-	cfg := validBaseConfig()
-	cfg.AuthorityMode = "bogus"
+	cfg.Replicator.Units[0].Target.Mode = ""
 	if err := Validate(cfg); err == nil {
-		t.Error("expected error for invalid authority_mode value")
+		t.Error("expected error for empty target mode (default is applied by Load, not Validate)")
 	}
 }
 
@@ -188,7 +186,6 @@ func TestValidateReplicatorInvalidFC(t *testing.T) {
 
 func TestValidateStateSealingValid(t *testing.T) {
 	cfg := &Config{
-		AuthorityMode: AuthorityModeStrict,
 		Server: ServerConfig{
 			Listeners: []ListenerConfig{
 				{
@@ -204,6 +201,16 @@ func TestValidateStateSealingValid(t *testing.T) {
 							},
 						},
 					},
+				},
+			},
+		},
+		Replicator: ReplicatorConfig{
+			Units: []UnitConfig{
+				{
+					ID:     "plc1",
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 1, Address: 0, Quantity: 8, IntervalMs: 1000}},
+					Target: TargetConfig{ListenerID: "main", UnitID: 1, Mode: TargetModeB},
 				},
 			},
 		},
@@ -293,13 +300,13 @@ func TestValidateReplicatorWriteConflict(t *testing.T) {
 					ID:     "plc1",
 					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000, StatusSlot: &slot0, DeviceName: "PLC1"},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID},
+					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID, Mode: TargetModeB},
 				},
 				{
 					ID:     "plc2",
 					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000, StatusSlot: &slot1, DeviceName: "PLC2"},
 					Reads:  []ReadConfig{{FC: 3, Address: 5, Quantity: 10, IntervalMs: 1000}}, // overlaps [0,10) at [5,15)
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID},
+					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID, Mode: TargetModeB},
 				},
 			},
 		},
@@ -312,7 +319,6 @@ func TestValidateReplicatorWriteConflict(t *testing.T) {
 func TestValidateReplicatorWriteConflictDifferentUnitIDs(t *testing.T) {
 	// Two units target different unit_ids — no conflict, even with overlapping read addresses.
 	cfg := &Config{
-		AuthorityMode: AuthorityModeStrict,
 		Server: ServerConfig{
 			Listeners: []ListenerConfig{
 				{
@@ -331,13 +337,13 @@ func TestValidateReplicatorWriteConflictDifferentUnitIDs(t *testing.T) {
 					ID:     "plc1",
 					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 1},
+					Target: TargetConfig{ListenerID: "main", UnitID: 1, Mode: TargetModeB},
 				},
 				{
 					ID:     "plc2",
 					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 2}, // different unit_id
+					Target: TargetConfig{ListenerID: "main", UnitID: 2, Mode: TargetModeB}, // different unit_id
 				},
 			},
 		},
@@ -369,13 +375,13 @@ func TestValidateStatusSlotDuplicate(t *testing.T) {
 					ID:     "plc1",
 					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000, StatusSlot: &slot, DeviceName: "PLC1"},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID},
+					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID, Mode: TargetModeB},
 				},
 				{
 					ID:     "plc2",
 					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000, StatusSlot: &slot, DeviceName: "PLC2"}, // same slot
 					Reads:  []ReadConfig{{FC: 3, Address: 50, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 2, StatusUnitID: &statusUID},
+					Target: TargetConfig{ListenerID: "main", UnitID: 2, StatusUnitID: &statusUID, Mode: TargetModeB},
 				},
 			},
 		},
@@ -408,7 +414,7 @@ func TestValidateStatusSlotExceedsCapacity(t *testing.T) {
 					ID:     "plc1",
 					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000, StatusSlot: &slot, DeviceName: "PLC1"},
 					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
-					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID},
+					Target: TargetConfig{ListenerID: "main", UnitID: 1, StatusUnitID: &statusUID, Mode: TargetModeB},
 				},
 			},
 		},

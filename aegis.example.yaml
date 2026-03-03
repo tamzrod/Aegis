@@ -61,6 +61,12 @@ replicator:
         # status_unit_id: required when source.status_slot is set
         status_unit_id: 255
 
+        # mode: authority mode for this target (default = "B")
+        # A = standalone (allows writes, always serves reads)
+        # B = strict     (rejects writes, blocks reads on unhealthy)
+        # C = buffered   (rejects writes, always serves reads)
+        mode: "B"
+
         # Optional per-FC address offsets (delta applied to destination address)
         # offsets:
         #   3: 0   # FC3 holding registers: no offset

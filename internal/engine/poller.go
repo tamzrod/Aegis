@@ -18,6 +18,12 @@ type Client interface {
 	ReadInputRegisters(addr, qty uint16) ([]uint16, error)   // FC 4
 }
 
+// modbusExceptionErr is satisfied by errors that carry a Modbus exception code.
+// modbusclient.ModbusException implements this interface.
+type modbusExceptionErr interface {
+	Code() uint16
+}
+
 // PollerConfig is the minimal runtime config the poller needs.
 // Each read block carries its own interval; there is no global interval.
 type PollerConfig struct {
@@ -128,6 +134,7 @@ func (p *Poller) pollAt(now time.Time) PollResult {
 	}
 
 	var blocks []BlockResult
+	var updates []BlockUpdate
 
 	for _, idx := range due {
 		rb := p.cfg.Reads[idx]
@@ -137,52 +144,65 @@ func (p *Poller) pollAt(now time.Time) PollResult {
 			if err != nil {
 				p.maybeInvalidateClient(err)
 				res.Err = err
+				updates = append(updates, blockUpdateFromErr(idx, err))
 				p.recordFailure(err)
+				res.BlockUpdates = updates
 				return res
 			}
 			blocks = append(blocks, BlockResult{
 				FC: rb.FC, Address: rb.Address, Quantity: rb.Quantity, Bits: bits,
 			})
+			updates = append(updates, BlockUpdate{BlockIdx: idx, Success: true})
 
 		case 2:
 			bits, err := p.client.ReadDiscreteInputs(rb.Address, rb.Quantity)
 			if err != nil {
 				p.maybeInvalidateClient(err)
 				res.Err = err
+				updates = append(updates, blockUpdateFromErr(idx, err))
 				p.recordFailure(err)
+				res.BlockUpdates = updates
 				return res
 			}
 			blocks = append(blocks, BlockResult{
 				FC: rb.FC, Address: rb.Address, Quantity: rb.Quantity, Bits: bits,
 			})
+			updates = append(updates, BlockUpdate{BlockIdx: idx, Success: true})
 
 		case 3:
 			regs, err := p.client.ReadHoldingRegisters(rb.Address, rb.Quantity)
 			if err != nil {
 				p.maybeInvalidateClient(err)
 				res.Err = err
+				updates = append(updates, blockUpdateFromErr(idx, err))
 				p.recordFailure(err)
+				res.BlockUpdates = updates
 				return res
 			}
 			blocks = append(blocks, BlockResult{
 				FC: rb.FC, Address: rb.Address, Quantity: rb.Quantity, Registers: regs,
 			})
+			updates = append(updates, BlockUpdate{BlockIdx: idx, Success: true})
 
 		case 4:
 			regs, err := p.client.ReadInputRegisters(rb.Address, rb.Quantity)
 			if err != nil {
 				p.maybeInvalidateClient(err)
 				res.Err = err
+				updates = append(updates, blockUpdateFromErr(idx, err))
 				p.recordFailure(err)
+				res.BlockUpdates = updates
 				return res
 			}
 			blocks = append(blocks, BlockResult{
 				FC: rb.FC, Address: rb.Address, Quantity: rb.Quantity, Registers: regs,
 			})
+			updates = append(updates, BlockUpdate{BlockIdx: idx, Success: true})
 
 		default:
 			res.Err = errors.New("poller: unsupported function code")
 			p.recordFailure(res.Err)
+			res.BlockUpdates = updates
 			return res
 		}
 	}
@@ -193,8 +213,33 @@ func (p *Poller) pollAt(now time.Time) PollResult {
 	}
 
 	res.Blocks = blocks
+	res.BlockUpdates = updates
 	p.recordSuccess()
 	return res
+}
+
+// blockUpdateFromErr constructs a BlockUpdate for a failed read.
+// It distinguishes between a Modbus exception and a transport-level error (timeout/disconnect).
+func blockUpdateFromErr(blockIdx int, err error) BlockUpdate {
+	u := BlockUpdate{BlockIdx: blockIdx, Success: false}
+
+	// Check for a Modbus application-layer exception first.
+	var excErr modbusExceptionErr
+	if errors.As(err, &excErr) {
+		u.ExceptionCode = byte(excErr.Code())
+		return u
+	}
+
+	// Transport-level failure: check for timeout.
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		u.Timeout = true
+		return u
+	}
+
+	// Other transport error (EOF, connection reset, etc.): treat as timeout-like.
+	u.Timeout = true
+	return u
 }
 
 // minInterval returns the smallest interval across all read blocks.
@@ -275,3 +320,4 @@ func isDeadConnErr(err error) bool {
 		strings.Contains(s, "wsasend") ||
 		strings.Contains(s, "wsarecv")
 }
+
