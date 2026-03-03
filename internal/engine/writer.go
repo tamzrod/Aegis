@@ -133,7 +133,7 @@ func (w *StoreWriter) WriteStatus(snap StatusSnapshot) error {
 	}
 
 	baseAddr := w.plan.Status.BaseSlot * StatusSlotsPerDevice
-	regs := encodeStatusBlock(snap, w.plan.Status.DeviceName)
+	regs := encodeStatusBlock(snap, w.plan.Status.DeviceName, uint8(w.plan.Status.BaseSlot))
 
 	src := make([]byte, len(regs)*2)
 	for i, v := range regs {
