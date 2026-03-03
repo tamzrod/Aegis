@@ -55,6 +55,13 @@ func (s *BlockHealthStore) Get(key BlockHealthKey) (ReadBlockHealth, bool) {
 	return h, ok
 }
 
+// SetBlockHealth sets the health state for one read block using primitive key components.
+// This method allows callers to avoid constructing BlockHealthKey directly, preventing
+// the internal key layout from leaking into other packages.
+func (s *BlockHealthStore) SetBlockHealth(unitID string, blockIdx int, h ReadBlockHealth) {
+	s.Set(BlockHealthKey{UnitID: unitID, BlockIdx: blockIdx}, h)
+}
+
 // GetBlockHealth returns the health state for one read block as primitive values.
 // This method satisfies the adapter.BlockHealthReader interface via structural typing
 // without requiring the adapter to import the engine package.
