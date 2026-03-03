@@ -2,12 +2,12 @@
 package adapter
 
 import (
-"encoding/binary"
-"io"
-"log"
-"net"
+	"encoding/binary"
+	"io"
+	"log"
+	"net"
 
-"github.com/tamzrod/Aegis/internal/core"
+	"github.com/tamzrod/Aegis/internal/core"
 )
 
 // HandleConn handles a single Modbus TCP client connection.
@@ -22,67 +22,67 @@ import (
 // State sealing is enforced here: if a memory block has a sealing flag coil
 // and its value is 0 (sealed), the server returns Device Busy (0x06) for all requests.
 func HandleConn(conn net.Conn, store core.Store, authority *AuthorityRegistry) {
-defer conn.Close()
+	defer conn.Close()
 
-localAddr, ok := conn.LocalAddr().(*net.TCPAddr)
-if !ok {
-log.Printf("adapter: failed to get local TCP address")
-return
-}
-port := uint16(localAddr.Port)
+	localAddr, ok := conn.LocalAddr().(*net.TCPAddr)
+	if !ok {
+		log.Printf("adapter: failed to get local TCP address")
+		return
+	}
+	port := uint16(localAddr.Port)
 
-for {
-req, err := ReadRequest(conn, port)
-if err != nil {
-if err != io.EOF {
-log.Printf("adapter: read error: %v", err)
-}
-return
-}
+	for {
+		req, err := ReadRequest(conn, port)
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("adapter: read error: %v", err)
+			}
+			return
+		}
 
-// Per-target authority enforcement: check before state sealing and dispatch.
-if authority != nil {
-addr, qty := extractAddressQuantity(req)
-if pdu, rejected := authority.Enforce(port, uint16(req.UnitID), req.FunctionCode, addr, qty); rejected {
-_, _ = conn.Write(BuildResponse(req, pdu))
-continue
-}
-}
+		// Per-target authority enforcement: check before state sealing and dispatch.
+		if authority != nil {
+			addr, qty := extractAddressQuantity(req)
+			if pdu, rejected := authority.Enforce(port, uint16(req.UnitID), req.FunctionCode, addr, qty); rejected {
+				_, _ = conn.Write(BuildResponse(req, pdu))
+				continue
+			}
+		}
 
-mid := core.MemoryID{
-Port:   req.Port,
-UnitID: uint16(req.UnitID),
-}
+		mid := core.MemoryID{
+			Port:   req.Port,
+			UnitID: uint16(req.UnitID),
+		}
 
-// State sealing: if configured and flag == 0 → Device Busy
-if mem, ok := store.Get(mid); ok {
-if seal := mem.StateSealing(); seal != nil {
-buf := []byte{0}
-if err := mem.ReadBits(seal.Area, seal.Address, 1, buf); err != nil {
-pdu := BuildExceptionPDU(req.FunctionCode, 0x06)
-_, _ = conn.Write(BuildResponse(req, pdu))
-continue
-}
-// 0 = sealed, 1 = unsealed
-if (buf[0] & 0x01) == 0 {
-pdu := BuildExceptionPDU(req.FunctionCode, 0x06)
-_, _ = conn.Write(BuildResponse(req, pdu))
-continue
-}
-}
-}
+		// State sealing: if configured and flag == 0 → Device Busy
+		if mem, ok := store.Get(mid); ok {
+			if seal := mem.StateSealing(); seal != nil {
+				buf := []byte{0}
+				if err := mem.ReadBits(seal.Area, seal.Address, 1, buf); err != nil {
+					pdu := BuildExceptionPDU(req.FunctionCode, 0x06)
+					_, _ = conn.Write(BuildResponse(req, pdu))
+					continue
+				}
+				// 0 = sealed, 1 = unsealed
+				if (buf[0] & 0x01) == 0 {
+					pdu := BuildExceptionPDU(req.FunctionCode, 0x06)
+					_, _ = conn.Write(BuildResponse(req, pdu))
+					continue
+				}
+			}
+		}
 
-pdu := DispatchMemory(store, req)
-if pdu == nil {
-return
-}
+		pdu := DispatchMemory(store, req)
+		if pdu == nil {
+			return
+		}
 
-frame := BuildResponse(req, pdu)
-if _, err := conn.Write(frame); err != nil {
-log.Printf("adapter: write error: %v", err)
-return
-}
-}
+		frame := BuildResponse(req, pdu)
+		if _, err := conn.Write(frame); err != nil {
+			log.Printf("adapter: write error: %v", err)
+			return
+		}
+	}
 }
 
 // extractAddressQuantity extracts the start address and quantity from a request payload.
@@ -91,19 +91,19 @@ return
 // For FC 15, 16: payload is [addr_hi, addr_lo, qty_hi, qty_lo, byte_count, ...].
 // Returns (0, 0) if the payload is too short to decode.
 func extractAddressQuantity(req *Request) (address, quantity uint16) {
-p := req.Payload
-if len(p) < 4 {
-return 0, 0
-}
-address = binary.BigEndian.Uint16(p[0:2])
-fc := req.FunctionCode
-switch {
-case fc >= 1 && fc <= 4:
-quantity = binary.BigEndian.Uint16(p[2:4])
-case fc == 5 || fc == 6:
-quantity = 1
-case fc == 15 || fc == 16:
-quantity = binary.BigEndian.Uint16(p[2:4])
-}
-return address, quantity
+	p := req.Payload
+	if len(p) < 4 {
+		return 0, 0
+	}
+	address = binary.BigEndian.Uint16(p[0:2])
+	fc := req.FunctionCode
+	switch {
+	case fc >= 1 && fc <= 4:
+		quantity = binary.BigEndian.Uint16(p[2:4])
+	case fc == 5 || fc == 6:
+		quantity = 1
+	case fc == 15 || fc == 16:
+		quantity = binary.BigEndian.Uint16(p[2:4])
+	}
+	return address, quantity
 }
