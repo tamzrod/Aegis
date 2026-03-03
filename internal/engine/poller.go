@@ -3,6 +3,7 @@ package engine
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"strings"
 	"time"
@@ -18,13 +19,16 @@ type Client interface {
 }
 
 // PollerConfig is the minimal runtime config the poller needs.
+// Each read block carries its own interval; there is no global interval.
 type PollerConfig struct {
-	UnitID   string
-	Interval time.Duration
-	Reads    []ReadBlock
+	UnitID string
+	Reads  []ReadBlock
 }
 
 // Poller reads from a field device via a Client.
+// It maintains an independent schedule per read block so that fast-moving
+// and slow-moving data can be read at different cadences without spawning
+// a goroutine per block.
 // It reuses the client while healthy and discards it when the connection is dead.
 // No retries are performed inside a poll cycle.
 // A future tick may create a new client via factory.
@@ -33,6 +37,10 @@ type Poller struct {
 
 	client  Client
 	factory func() (Client, error)
+
+	// nextExec[i] is the earliest time at which reads[i] may be executed.
+	// A zero value means the read is immediately due.
+	nextExec []time.Time
 
 	// Transport lifetime instrumentation (passive only)
 	counters TransportCounters
@@ -45,35 +53,65 @@ func NewPoller(cfg PollerConfig, client Client, factory func() (Client, error)) 
 	if cfg.UnitID == "" {
 		return nil, errors.New("poller: unit id required")
 	}
-	if cfg.Interval <= 0 {
-		return nil, errors.New("poller: interval must be > 0")
-	}
 	if len(cfg.Reads) == 0 {
 		return nil, errors.New("poller: at least one read block required")
 	}
+	for i, r := range cfg.Reads {
+		if r.Interval <= 0 {
+			return nil, fmt.Errorf("poller: reads[%d]: interval must be > 0", i)
+		}
+	}
 
 	return &Poller{
-		cfg:     cfg,
-		client:  client,
-		factory: factory,
+		cfg:      cfg,
+		client:   client,
+		factory:  factory,
+		nextExec: make([]time.Time, len(cfg.Reads)), // zero → all reads due immediately
 	}, nil
 }
 
-// PollOnce performs exactly one poll cycle.
-// All-or-nothing: any failure aborts the cycle and returns a PollResult with Err set.
+// PollOnce performs one scheduling tick at the current wall time.
+// It executes every read block that is due and skips blocks that are not yet due.
+// If no blocks are due, it returns a successful result with an empty Blocks slice.
+//
+// All-or-nothing within the due set: any failure aborts the remaining due reads
+// and returns a PollResult with Err set.  nextExec is only advanced for reads
+// that are executed in a fully-successful cycle.
 //
 // Connection policy:
 //   - Reuse existing client while healthy.
-//   - If client is nil, try to create one via factory.
+//   - If client is nil and at least one block is due, try to create one via factory.
 //   - On a dead-connection error, discard client so the next tick can reconnect.
 func (p *Poller) PollOnce() PollResult {
+	return p.pollAt(time.Now())
+}
+
+// pollAt is the internal implementation of PollOnce with an explicit clock value.
+// Using an explicit time allows the Run loop to use the ticker's channel time,
+// which avoids drift accumulation.
+func (p *Poller) pollAt(now time.Time) PollResult {
 	p.counters.RequestsTotal++
 
 	res := PollResult{
 		UnitID: p.cfg.UnitID,
-		At:     time.Now(),
+		At:     now,
 	}
 
+	// Determine which read blocks are due at this tick.
+	due := make([]int, 0, len(p.cfg.Reads))
+	for i := range p.cfg.Reads {
+		if !now.Before(p.nextExec[i]) {
+			due = append(due, i)
+		}
+	}
+
+	if len(due) == 0 {
+		// No reads are scheduled for this tick.
+		p.recordSuccess()
+		return res
+	}
+
+	// Lazy connect: only attempt when there is work to do.
 	if p.client == nil {
 		if p.factory == nil {
 			res.Err = errors.New("poller: client is nil and no factory provided")
@@ -91,7 +129,8 @@ func (p *Poller) PollOnce() PollResult {
 
 	var blocks []BlockResult
 
-	for _, rb := range p.cfg.Reads {
+	for _, idx := range due {
+		rb := p.cfg.Reads[idx]
 		switch rb.FC {
 		case 1:
 			bits, err := p.client.ReadCoils(rb.Address, rb.Quantity)
@@ -148,9 +187,30 @@ func (p *Poller) PollOnce() PollResult {
 		}
 	}
 
+	// All due reads succeeded: advance their next-execution times.
+	for _, idx := range due {
+		p.nextExec[idx] = now.Add(p.cfg.Reads[idx].Interval)
+	}
+
 	res.Blocks = blocks
 	p.recordSuccess()
 	return res
+}
+
+// minInterval returns the smallest interval across all read blocks.
+// Used by Run to set the ticker resolution so no read block is late by more
+// than one tick.  Precondition: cfg.Reads is non-empty (guaranteed by NewPoller).
+func (p *Poller) minInterval() time.Duration {
+	if len(p.cfg.Reads) == 0 {
+		return time.Second // should never happen after successful NewPoller
+	}
+	min := p.cfg.Reads[0].Interval
+	for _, r := range p.cfg.Reads[1:] {
+		if r.Interval < min {
+			min = r.Interval
+		}
+	}
+	return min
 }
 
 // Counters returns a snapshot copy of the transport counters.

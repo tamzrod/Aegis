@@ -48,9 +48,11 @@ replicator:
         - fc: 3               # Read Holding Registers
           address: 0
           quantity: 10
+          interval_ms: 200    # fast-moving data: 200 ms
         - fc: 4               # Read Input Registers
           address: 0
           quantity: 5
+          interval_ms: 5000   # slow-moving data: 5 s
 
       target:
         listener_id: "primary"  # writes into the "primary" listener's memory
@@ -63,6 +65,3 @@ replicator:
         # offsets:
         #   3: 0   # FC3 holding registers: no offset
         #   4: 0   # FC4 input registers: no offset
-
-      poll:
-        interval_ms: 1000     # poll every 1 second

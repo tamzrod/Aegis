@@ -3,12 +3,13 @@ package engine
 
 import "time"
 
-// ReadBlock describes one Modbus read geometry.
+// ReadBlock describes one Modbus read geometry and its independent poll cadence.
 // Geometry only: no semantics.
 type ReadBlock struct {
 	FC       uint8
 	Address  uint16
 	Quantity uint16
+	Interval time.Duration // how often this block is executed; must be > 0
 }
 
 // BlockResult is the raw result of a single read.
