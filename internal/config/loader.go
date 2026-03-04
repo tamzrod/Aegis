@@ -19,7 +19,13 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
+	return LoadBytes(data)
+}
 
+// LoadBytes parses YAML config from in-memory bytes and returns the parsed Config.
+// It applies the same defaults and normalisations as Load.
+// Structural validation is performed by Validate().
+func LoadBytes(data []byte) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config yaml: %w", err)
