@@ -423,6 +423,14 @@ select.field-input {
   display: none;
 }
 
+/* ---- Header logo icon ---- */
+.header-logo {
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
 /* ---- Login logo ---- */
 .login-logo {
   display: flex;
