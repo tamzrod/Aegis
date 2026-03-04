@@ -63,7 +63,9 @@ type Server struct {
 // NewServer creates a WebUI Server that listens on listen and uses mgr for runtime operations.
 // If mgr also implements StatusProvider, the /api/runtime/status endpoint becomes active.
 // If mgr also implements ListenerProvider, the /api/runtime/listeners endpoint becomes active.
-func NewServer(listen string, mgr Manager) *Server {
+// auth configures optional HTTP Basic Authentication; both username and password_hash must be
+// non-empty for authentication to be enforced.
+func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	mux := http.NewServeMux()
 
 	h := &handlers{mgr: mgr}
@@ -94,7 +96,7 @@ func NewServer(listen string, mgr Manager) *Server {
 
 	return &Server{
 		listen: listen,
-		srv:    &http.Server{Addr: listen, Handler: mux},
+		srv:    &http.Server{Addr: listen, Handler: basicAuth(auth, mux)},
 	}
 }
 

@@ -29,9 +29,24 @@ type Config struct {
 	// It is disabled by default; omitting the section is safe.
 	WebUI WebUIConfig `yaml:"webui"`
 
+	// Auth holds HTTP Basic Auth credentials for the WebUI.
+	// Authentication is always enforced. When the section is absent or fields are empty,
+	// LoadBytes applies the defaults: username=admin, password=admin.
+	// PasswordHash must be a bcrypt hash.
+	Auth AuthConfig `yaml:"auth"`
+
 	// Debug contains optional developer/diagnostic flags.
 	// All flags default to false; omitting the section is safe.
 	Debug DebugConfig `yaml:"debug"`
+}
+
+// AuthConfig holds HTTP Basic Auth credentials for the WebUI.
+// Authentication is always enforced. Default values (username=admin, password=admin)
+// are applied by LoadBytes when the section is absent.
+// PasswordHash must be a bcrypt hash of the password.
+type AuthConfig struct {
+	Username     string `yaml:"username"`
+	PasswordHash string `yaml:"password_hash"`
 }
 
 // DebugConfig contains optional developer/diagnostic flags.

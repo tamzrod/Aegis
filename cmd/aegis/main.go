@@ -40,6 +40,7 @@ func main() {
 
 	webuiListen := defaultWebUIListen
 	startWebUI := false
+	var authCfg config.AuthConfig
 
 	// --------------------
 	// Load and validate configuration
@@ -63,12 +64,14 @@ func main() {
 			log.Printf("aegis: config validation failed: %v", err)
 			rt.SetError(err)
 			webuiListen = cfg.WebUI.Listen
+			authCfg = cfg.Auth
 			startWebUI = true
 		} else {
 			// --------------------
 			// Config is valid — start the engine
 			// --------------------
 			webuiListen = cfg.WebUI.Listen
+			authCfg = cfg.Auth
 
 			rawYAML, err := os.ReadFile(cfgPath)
 			if err != nil {
@@ -93,7 +96,7 @@ func main() {
 	// Runtime actions (Start/Stop/Restart) must not touch this server.
 	// --------------------
 	if startWebUI {
-		srv := webui.NewServer(webuiListen, rt)
+		srv := webui.NewServer(webuiListen, rt, authCfg)
 		go func() {
 			if err := srv.ListenAndServe(); err != nil {
 				log.Printf("aegis: webui: %v", err)
