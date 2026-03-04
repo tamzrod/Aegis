@@ -24,6 +24,17 @@ const (
 type Config struct {
 	// Replicator declares the upstream devices to poll and the in-process targets to write.
 	Replicator ReplicatorConfig `yaml:"replicator"`
+
+	// WebUI declares the optional read-only HTTP interface.
+	// It is disabled by default; omitting the section is safe.
+	WebUI WebUIConfig `yaml:"webui"`
+}
+
+// WebUIConfig declares the optional read-only HTTP interface.
+// Default: disabled. When enabled, exposes /healthz, /status, and /config.
+type WebUIConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Listen  string `yaml:"listen"` // e.g. ":8080"
 }
 
 // --------------------

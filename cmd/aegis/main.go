@@ -11,8 +11,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/tamzrod/Aegis/internal/adapter"
+	webui "github.com/tamzrod/Aegis/internal/adapter/http"
 	"github.com/tamzrod/Aegis/internal/config"
 	"github.com/tamzrod/Aegis/internal/engine"
 )
@@ -107,6 +109,29 @@ func main() {
 	}
 
 	log.Println("aegis: replication engine started")
+
+	// --------------------
+	// Start optional read-only WebUI HTTP adapter (if enabled)
+	// --------------------
+	if cfg.WebUI.Enabled {
+		var readBlocks int
+		for _, u := range cfg.Replicator.Units {
+			readBlocks += len(u.Reads)
+		}
+		configBytes, err := os.ReadFile(cfgPath)
+		if err != nil {
+			log.Printf("aegis: webui: could not read config file for /config endpoint: %v", err)
+		}
+		rv := &runtimeView{
+			startTime:      time.Now(),
+			deviceCount:    len(cfg.Replicator.Units),
+			readBlockCount: readBlocks,
+		}
+		cv := &configView{data: configBytes}
+		go webui.NewServer(cfg.WebUI.Listen, rv, cv).Start(ctx)
+		log.Printf("aegis: webui adapter starting on %s", cfg.WebUI.Listen)
+	}
+
 	log.Println("aegis: running — press Ctrl+C to stop")
 
 	// --------------------
