@@ -5,6 +5,8 @@ const DEFAULT_TARGET_MODE = 'B';
 
 // FC options for the read editor dropdown.
 const FC_OPTIONS = [
+  { value: 1, label: 'Read Coils (1)' },
+  { value: 2, label: 'Read Discrete Inputs (2)' },
   { value: 3, label: 'Read Holding Registers (3)' },
   { value: 4, label: 'Read Input Registers (4)' },
 ];
@@ -185,7 +187,7 @@ function renderTargetEdit(device) {
   const numFields = [
     { label: 'Port',           key: 'port',           value: tgt.port           ?? 0 },
     { label: 'Unit ID',        key: 'unit_id',        value: tgt.unit_id        ?? 0 },
-    { label: 'Status Unit ID', key: 'status_unit_id', value: tgt.status_unit_id ?? 0 },
+    { label: 'Status Unit ID', key: 'status_unit_id', value: tgt.status_unit_id ?? 100 },
     { label: 'Status Slot',    key: 'status_slot',    value: tgt.status_slot    ?? 0 },
   ];
   const inputs = {};
