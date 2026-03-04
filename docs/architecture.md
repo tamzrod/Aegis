@@ -2,7 +2,14 @@
 
 ## High-Level System Overview
 
-Aegis is a single Go binary that fuses two roles:
+Aegis is a single Go binary that supports two operational modes:
+
+- **Normal mode** — full replication engine + Modbus TCP server, active when a valid configuration file is present.
+- **WebUI-only mode** — configuration interface only, active when the configuration file is missing or invalid.
+
+The WebUI is the primary entry point and always starts (when enabled or when no config is found). It allows the operator to configure the system and apply changes at runtime. The replication engine and Modbus TCP server only start after a valid configuration is loaded.
+
+In normal mode Aegis fuses two roles:
 
 1. **Modbus TCP server** — accepts inbound client connections and serves register and coil data from an in-process memory store.
 2. **Replication engine** — polls one or more upstream Modbus devices on a configured interval and writes the read values directly into the same in-process memory store.
@@ -10,6 +17,12 @@ Aegis is a single Go binary that fuses two roles:
 The critical constraint is that the engine and the server share memory **in-process**. There is no internal TCP loopback, no channel serialization between engine and server, and no secondary Modbus client-to-server connection inside the binary. The engine calls `Memory.WriteRegs` / `Memory.WriteBits` as ordinary function calls; the server calls `Memory.ReadRegs` / `Memory.ReadBits` against the same `*Memory` pointer. An `sync.RWMutex` embedded in each `Memory` instance provides concurrency safety between the two.
 
 ```
+                              ┌─────────────────────────────────────────┐
+                              │  WebUI (always available on port 8080)  │
+                              │  /healthz  /status  /config             │
+                              └──────────────┬──────────────────────────┘
+                                             │ (config present & valid)
+                                             ▼
 Upstream device ──Modbus TCP──► Poller (engine)
                                      │ store.MustGet → mem.WriteRegs/WriteBits
                                      ▼
@@ -19,6 +32,46 @@ Upstream device ──Modbus TCP──► Poller (engine)
                                      │
 Modbus TCP client ◄──Modbus TCP──── Server adapter (adapter)
 ```
+
+---
+
+## Startup Modes
+
+Aegis supports three startup scenarios, determined at launch time:
+
+| Invocation | Config file present? | Behavior |
+|---|---|---|
+| `aegis <config.yaml>` | Yes | Load specified file; start engine + WebUI (if `webui.enabled: true`). |
+| `aegis` | Yes (`config.yaml` in working dir) | Load `config.yaml`; start engine + WebUI (if `webui.enabled: true`). |
+| `aegis` | No `config.yaml` found | Start WebUI only on `:8080`; runtime (replicator + adapters) remains disabled. |
+
+In all cases the binary does **not** terminate on a missing config. The missing-config state is treated as a first-boot condition, not a fatal error.
+
+---
+
+## First Boot Workflow
+
+On a fresh device with no configuration file:
+
+1. Start Aegis (no arguments): `./aegis`
+2. Open the WebUI at **http://localhost:8080**.
+3. Use the UI to add devices (units) and define their read blocks.
+4. Click **"Apply Config"** to save the configuration and write `config.yaml` to disk.
+5. The runtime (replicator + Modbus TCP adapters) starts automatically; the gateway begins serving Modbus data.
+
+No manual file editing or process restart is required for initial setup.
+
+---
+
+## Degraded Mode
+
+Aegis enters degraded mode when the configuration file is missing or contains invalid YAML / fails validation:
+
+- **WebUI remains running** — accessible at the configured listen address (default `:8080`).
+- **Runtime is disabled** — no replicator units are started, no Modbus TCP server is listening.
+- **Error information is surfaced** — the WebUI `/status` endpoint reports the error so the operator can diagnose and correct it.
+
+Degraded mode is recoverable: once a valid configuration is applied via the WebUI, the runtime starts without requiring a process restart.
 
 ---
 
@@ -154,46 +207,52 @@ internal/core
 ```
 main()
   │
-  ├─1─ os.Args[1] — config file path required; missing → log.Fatal
+  ├─1─ os.Args[1] (optional) — config file path; defaults to "config.yaml"
   │
-  ├─2─ config.Load(path)
+  ├─2─ os.Stat(cfgPath)
+  │      file not found → log "no config file found, starting WebUI only"
+  │                        startWebUI = true  [→ skip to step 6]
+  │      file found     → continue to step 3
+  │
+  ├─3─ config.Load(path)
   │      os.ReadFile → yaml.Unmarshal → *Config
-  │      failure → log.Fatalf("config load failed: %v", err)
+  │      failure → rt.SetError(err); startWebUI = true  [→ skip to step 6]
   │
-  ├─3─ config.Validate(cfg)
+  ├─4─ config.Validate(cfg)
   │      structural and constraint checks
-  │      failure → log.Fatalf("config validation failed: %v", err)
+  │      failure → rt.SetError(err); startWebUI = true  [→ skip to step 6]
   │
-  ├─4─ config.BuildMemStore(cfg)
-  │      for each (port, unit_id) derived from replicator reads:
-  │        compute bounding range per FC → core.NewMemory(layouts)
-  │        store.Add(MemoryID{port, unitID}, mem)
-  │      for each (port, status_unit_id) with status_slot:
-  │        allocate (max_slot+1)*30 holding registers
-  │        store.Add(MemoryID{port, statusUnitID}, mem)
-  │      failure → log.Fatalf("memory store build failed: %v", err)
+  ├─5─ rt.Start(cfg, rawYAML)  [only reached when config is valid]
+  │      config.BuildMemStore(cfg)
+  │        for each (port, unit_id) derived from replicator reads:
+  │          compute bounding range per FC → core.NewMemory(layouts)
+  │          store.Add(MemoryID{port, unitID}, mem)
+  │        for each (port, status_unit_id) with status_slot:
+  │          allocate (max_slot+1)*30 holding registers
+  │          store.Add(MemoryID{port, statusUnitID}, mem)
+  │      engine.Build(cfg, store)
+  │        for each replicator unit:
+  │          builds Poller (lazy connect, no initial dial)
+  │          builds WritePlan → StoreWriter
+  │      for each unique target.Port across all replicator units:
+  │        adapter.NewServer(":PORT", store)
+  │        go srv.ListenAndServe()
+  │      for each engine.Unit:
+  │        out := make(chan PollResult, 8)
+  │        go orchestrator(out)
+  │        go poller.Run(ctx, out)
+  │      startWebUI = cfg.WebUI.Enabled
   │
-  ├─5─ engine.Build(cfg, store)
-  │      for each replicator unit:
-  │        builds Poller (lazy connect, no initial dial)
-  │        builds WritePlan → StoreWriter (uses target.Port directly)
-  │      failure → log.Fatalf("engine build failed: %v", err)
+  ├─6─ WebUI startup  [conditional on startWebUI == true]
+  │      webui.NewServer(webuiListen, rt)
+  │      go srv.ListenAndServe()
+  │      log "webui adapter starting on <addr>"
   │
-  ├─6─ for each unique target.Port across all replicator units:
-  │      adapter.NewServer(":PORT", store)
-  │      go srv.ListenAndServe()   ← blocks inside on net.Listen + accept loop
-  │      failure inside goroutine → log.Fatalf
-  │
-  ├─7─ for each engine.Unit:
-  │      out := make(chan PollResult, 8)
-  │      go orchestrator(out)      ← consumes results, calls writer.Write + writer.WriteStatus
-  │      go poller.Run(ctx, out)   ← ticker loop, calls PollOnce every interval
-  │
-  └─8─ signal.Notify(quit, SIGINT, SIGTERM)
+  └─7─ signal.Notify(quit, SIGINT, SIGTERM)
          <-quit → cancel() → all goroutines exit via ctx.Done()
 ```
 
-Steps 2–5 all run synchronously on the main goroutine before any network or goroutine is created. Any failure in steps 2–5 calls `log.Fatal` / `log.Fatalf` and terminates the process before listeners or pollers start.
+Steps 3–4 run synchronously before any goroutine or network socket is created. However, failures at these steps are **non-fatal**: the process continues into WebUI-only mode. The runtime (steps 5+) is skipped whenever config loading or validation fails. The WebUI HTTP server (step 6) starts independently and is not gated on the runtime being healthy.
 
 ---
 
@@ -301,7 +360,7 @@ The `RWMutex` allows concurrent reads from multiple TCP clients while serialisin
 
 ## Configuration Loading Behavior
 
-Config loading is a two-step synchronous process that runs before any goroutine or network socket is created:
+Config loading is a two-step synchronous process. It runs before the runtime is started but **after** the WebUI server is started (or scheduled to start). Missing or invalid config causes the process to enter WebUI-only mode rather than terminating.
 
 **Step 1 — `config.Load(path string) (*Config, error)`**:
 - `os.ReadFile(path)` — reads the entire file into memory.
@@ -325,15 +384,17 @@ The YAML file is loaded exactly once at startup. There is no hot-reload mechanis
 
 | Stage | Failure Condition | Process Behavior |
 |---|---|---|
-| No config path argument | `len(os.Args) < 2` | `log.Fatal("usage: aegis <config.yaml>")` → exit code 1 |
-| File not readable | `os.ReadFile` returns error | `log.Fatalf("config load failed: read config file: %v", err)` → exit code 1 |
-| YAML parse error | `yaml.Unmarshal` returns error | `log.Fatalf("config load failed: parse config yaml: %v", err)` → exit code 1 |
-| Validation failure | `config.Validate` returns error | `log.Fatalf("config validation failed: %v", err)` → exit code 1 |
-| Memory store build failure | `config.BuildMemStore` returns error | `log.Fatalf("aegis: memory store build failed: %v", err)` → exit code 1 |
-| Engine build failure | `engine.Build` returns error | `log.Fatalf("aegis: engine build failed: %v", err)` → exit code 1 |
-| Adapter listen failure | `net.Listen` fails inside goroutine | `log.Fatalf("aegis: adapter (%s) failed: %v", ...)` → exit code 1 |
+| Config file not found | `os.Stat` returns `ErrNotExist` | **Recoverable** — WebUI starts on the configured listen address (default `:8080`); runtime disabled. |
+| File not readable | `os.ReadFile` returns error | **Recoverable** — `rt.SetError(err)`; WebUI starts; runtime disabled. |
+| YAML parse error | `yaml.Unmarshal` returns error | **Recoverable** — `rt.SetError(err)`; WebUI shows error; runtime disabled. |
+| Validation failure | `config.Validate` returns error | **Recoverable** — `rt.SetError(err)`; WebUI shows error; runtime disabled. |
+| Memory store build failure | `config.BuildMemStore` returns error | **Recoverable** — `rt.SetError(err)`; WebUI shows error; runtime disabled. |
+| Engine build failure | `engine.Build` returns error | **Recoverable** — `rt.SetError(err)`; WebUI shows error; runtime disabled. |
+| Adapter listen failure | `net.Listen` fails inside goroutine | `log.Fatalf` → exit code 1 (WebUI may still be running). |
 
-In all cases the process terminates before serving any request. No goroutines, listeners, or pollers are started prior to completion of steps 2–5 in the boot sequence. Validation errors include the field path (e.g. `replicator.units[0] (plc1): target.port must be > 0`).
+Failures at the config-loading and validation stages are **non-fatal**. The process continues in WebUI-only (degraded) mode, giving the operator the opportunity to correct the configuration through the browser interface without restarting the device. Only failures that prevent the runtime network adapters from binding their ports result in a fatal log and process exit.
+
+Validation errors include the field path (e.g. `replicator.units[0] (plc1): target.port must be > 0`).
 
 ---
 
