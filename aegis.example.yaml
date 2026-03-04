@@ -56,3 +56,11 @@ replicator:
 # Optional debug flags (all default to false; omit section for normal operation).
 # debug:
 #   adapter_routing: false   # Set to true to enable verbose per-request routing logs.
+
+# Optional HTTP Basic Auth credentials for the WebUI.
+# When both username and password_hash are set, all WebUI requests require authentication.
+# password_hash must be a bcrypt hash (e.g. generated with: htpasswd -nbB admin mypassword).
+# Omitting this section (or leaving either field empty) disables authentication.
+# auth:
+#   username: admin
+#   password_hash: "$2a$10$..."

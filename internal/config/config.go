@@ -29,9 +29,22 @@ type Config struct {
 	// It is disabled by default; omitting the section is safe.
 	WebUI WebUIConfig `yaml:"webui"`
 
+	// Auth declares optional HTTP Basic Auth credentials for the WebUI.
+	// When both username and password_hash are non-empty, all WebUI requests
+	// require valid credentials. password_hash must be a bcrypt hash.
+	Auth AuthConfig `yaml:"auth"`
+
 	// Debug contains optional developer/diagnostic flags.
 	// All flags default to false; omitting the section is safe.
 	Debug DebugConfig `yaml:"debug"`
+}
+
+// AuthConfig holds optional HTTP Basic Auth credentials for the WebUI.
+// Authentication is only enforced when both Username and PasswordHash are non-empty.
+// PasswordHash must be a bcrypt hash of the password (e.g. generated with bcrypt cost 10+).
+type AuthConfig struct {
+	Username     string `yaml:"username"`
+	PasswordHash string `yaml:"password_hash"`
 }
 
 // DebugConfig contains optional developer/diagnostic flags.

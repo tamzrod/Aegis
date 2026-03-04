@@ -37,7 +37,7 @@ func (m *mockManager) StartRuntime() error                      { return m.start
 func (m *mockManager) StopRuntime() error                       { return m.stopRuntimeErr }
 
 func newTestServer(mgr Manager) http.Handler {
-	s := NewServer(":0", mgr)
+	s := NewServer(":0", mgr, config.AuthConfig{})
 	return s.srv.Handler
 }
 
@@ -168,7 +168,7 @@ replicator:
 	// Here we verify the WebUI server is not started when Enabled=false by checking
 	// that NewServer is the only construct needed (no automatic start).
 	mgr := &mockManager{yaml: yaml}
-	s := NewServer(":0", mgr)
+	s := NewServer(":0", mgr, config.AuthConfig{})
 	if s == nil {
 		t.Fatal("NewServer returned nil")
 	}
@@ -852,5 +852,93 @@ func TestRuntimeDevicesMethodNotAllowed(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// newTestServerWithAuth creates a test server with Basic Auth enabled.
+func newTestServerWithAuth(mgr Manager, username, passwordHash string) http.Handler {
+	s := NewServer(":0", mgr, config.AuthConfig{Username: username, PasswordHash: passwordHash})
+	return s.srv.Handler
+}
+
+// bcryptHashOf is the bcrypt hash of "testpassword" at MinCost, used in auth tests.
+const bcryptHashOf_testpassword = "$2a$04$EfZKhUjPhcA6J4aFq0R7a.Onh4.XG5W1X4S0IgbgfYO2mNhlWqSFi"
+
+// TestBasicAuthMissingCredentials verifies that a request without credentials returns 401.
+func TestBasicAuthMissingCredentials(t *testing.T) {
+	mgr := &mockManager{yaml: []byte("replicator: {}")}
+	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
+	}
+	if auth := rec.Header().Get("WWW-Authenticate"); !strings.Contains(auth, "Basic") {
+		t.Errorf("want WWW-Authenticate: Basic ..., got %q", auth)
+	}
+}
+
+// TestBasicAuthWrongPassword verifies that incorrect password returns 401.
+func TestBasicAuthWrongPassword(t *testing.T) {
+	mgr := &mockManager{yaml: []byte("replicator: {}")}
+	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
+	req.SetBasicAuth("admin", "wrongpassword")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
+	}
+}
+
+// TestBasicAuthWrongUsername verifies that incorrect username returns 401.
+func TestBasicAuthWrongUsername(t *testing.T) {
+	mgr := &mockManager{yaml: []byte("replicator: {}")}
+	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
+	req.SetBasicAuth("wronguser", "testpassword")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
+	}
+}
+
+// TestBasicAuthValidCredentials verifies that correct credentials grant access.
+func TestBasicAuthValidCredentials(t *testing.T) {
+	mgr := &mockManager{yaml: []byte("replicator: {}")}
+	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
+	req.SetBasicAuth("admin", "testpassword")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+}
+
+// TestBasicAuthDisabledWhenEmpty verifies that auth is not enforced when username or
+// password_hash is empty (auth disabled by default).
+func TestBasicAuthDisabledWhenEmpty(t *testing.T) {
+	mgr := &mockManager{yaml: []byte("replicator: {}")}
+
+	// No username/password_hash set — auth should be disabled.
+	h := newTestServerWithAuth(mgr, "", "")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200 (auth disabled), got %d", rec.Code)
 	}
 }
