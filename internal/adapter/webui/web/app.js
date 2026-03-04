@@ -417,7 +417,12 @@ function renderDeviceList() {
 
     // Status dot
     const dot = document.createElement('span');
-    dot.className = 'device-status-dot device-' + (deviceStatuses[d.key] || 'offline');
+    const statusObj = deviceStatuses[d.key] || { status: 'offline', polling: false };
+    dot.className = 'device-status-dot device-' + statusObj.status;
+    if (statusObj.polling) {
+      dot.classList.add('device-blink');
+      setTimeout(() => dot.classList.remove('device-blink'), 600);
+    }
     li.appendChild(dot);
 
     const nameSpan = document.createElement('span');
@@ -464,7 +469,7 @@ async function loadDeviceStatuses() {
     const list = await res.json();
     deviceStatuses = {};
     if (Array.isArray(list)) {
-      list.forEach(s => { deviceStatuses[s.id] = s.status; });
+      list.forEach(s => { deviceStatuses[s.id] = { status: s.status, polling: !!s.polling }; });
     }
   } catch (e) {
     // ignore — server may be unavailable
@@ -535,7 +540,7 @@ document.getElementById('btn-add').addEventListener('click', () => {
     display_name: key,
     source: { endpoint: '', unit_id: 0, timeout_ms: 1000, device_name: '' },
     reads:  [],
-    target: { port: 0, unit_id: 0, status_unit_id: 0, status_slot: 0, mode: DEFAULT_TARGET_MODE },
+    target: { port: 0, unit_id: 0, status_unit_id: 100, status_slot: 0, mode: DEFAULT_TARGET_MODE },
   };
   workingConfig.devices.push(newDevice);
   selectedDeviceKey = key;
