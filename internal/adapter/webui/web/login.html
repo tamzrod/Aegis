@@ -9,7 +9,24 @@
 <body>
     <div class="login-wrap">
         <div class="login-card">
-            <div class="login-card__title">Aegis</div>
+            <div class="login-logo">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="160" height="160" role="img" aria-label="Aegis">
+                    <defs>
+                        <radialGradient id="g2" cx="40%" cy="35%" r="65%">
+                            <stop offset="0%" stop-color="#1e4080"/>
+                            <stop offset="100%" stop-color="#080820"/>
+                        </radialGradient>
+                    </defs>
+                    <circle cx="100" cy="90" r="85" fill="url(#g2)"/>
+                    <line x1="8" y1="90" x2="40" y2="90" stroke="#9CA3AF" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+                    <line x1="40" y1="90" x2="60" y2="55" stroke="#9CA3AF" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+                    <line x1="192" y1="90" x2="160" y2="90" stroke="#9CA3AF" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+                    <line x1="160" y1="90" x2="140" y2="55" stroke="#9CA3AF" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+                    <line x1="100" y1="5" x2="100" y2="38" stroke="#9CA3AF" stroke-width="6" stroke-linecap="round" opacity="0.8"/>
+                    <text x="100" y="106" text-anchor="middle" font-family="system-ui, sans-serif" font-size="40" font-weight="700" letter-spacing="5" fill="#a0c4ff">AEGIS</text>
+                    <text x="100" y="194" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" fill="#9CA3AF" letter-spacing="0.5">Secure Modbus Fan-out</text>
+                </svg>
+            </div>
             <div class="login-field">
                 <label for="username">Username</label>
                 <input class="field-input" type="text" id="username" name="username" autocomplete="username" autofocus>
