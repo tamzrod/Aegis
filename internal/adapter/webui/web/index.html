@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aegis Config Editor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Aegis Config Editor</h1>
+    <div class="toolbar">
+      <button id="btn-reload">Reload from Disk</button>
+      <button id="btn-apply" class="primary">Apply</button>
+      <button id="btn-restart" class="danger">Restart</button>
+    </div>
+    <textarea id="editor" spellcheck="false"></textarea>
+    <div id="status" class="status"></div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

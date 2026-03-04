@@ -1,0 +1,90 @@
+// internal/adapter/webui/handlers.go
+package webui
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"time"
+)
+
+// osExit is a package-level variable so tests can intercept os.Exit.
+var osExit = os.Exit
+
+type handlers struct {
+	mgr Manager
+}
+
+// handleConfigRaw serves GET /api/config/raw and PUT /api/config/raw.
+func (h *handlers) handleConfigRaw(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getConfigRaw(w, r)
+	case http.MethodPut:
+		h.putConfigRaw(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// getConfigRaw returns the active config as text/yaml.
+func (h *handlers) getConfigRaw(w http.ResponseWriter, _ *http.Request) {
+	data := h.mgr.GetActiveConfigYAML()
+	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// putConfigRaw validates, writes to disk, and soft-rebuilds the runtime.
+func (h *handlers) putConfigRaw(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MiB limit
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+
+	if err := h.mgr.ApplyConfig(body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleReload re-reads the config file, validates, and soft-rebuilds.
+func (h *handlers) handleReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := h.mgr.ReloadFromDisk(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleRestart returns 200 then calls os.Exit(0) after a short delay.
+func (h *handlers) handleRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		osExit(0)
+	}()
+}
+
+// writeError writes a JSON error response.
+func writeError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}

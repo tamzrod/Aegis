@@ -4,6 +4,7 @@ package adapter
 import (
 	"log"
 	"net"
+	"sync"
 
 	"github.com/tamzrod/Aegis/internal/core"
 )
@@ -16,22 +17,41 @@ type Server struct {
 	listen    string
 	store     core.Store
 	authority Enforcer
+
+	mu   sync.Mutex
+	ln   net.Listener
+	done chan struct{}
 }
 
 // NewServer creates a Server for the given listen address, store, and authority enforcer.
 func NewServer(listen string, store core.Store, authority Enforcer) *Server {
-	return &Server{listen: listen, store: store, authority: authority}
+	return &Server{
+		listen:    listen,
+		store:     store,
+		authority: authority,
+		done:      make(chan struct{}),
+	}
 }
 
 // ListenAndServe starts accepting Modbus TCP connections.
 // Each connection is handled in its own goroutine.
-// This function blocks until the listener fails.
+// This function blocks until the listener fails or Shutdown is called.
 func (s *Server) ListenAndServe() error {
 	ln, err := net.Listen("tcp", s.listen)
 	if err != nil {
 		return err
 	}
-	defer ln.Close()
+
+	s.mu.Lock()
+	s.ln = ln
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		s.ln = nil
+		s.mu.Unlock()
+		close(s.done)
+	}()
 
 	log.Printf("adapter: modbus tcp listening on %s", s.listen)
 
@@ -41,5 +61,17 @@ func (s *Server) ListenAndServe() error {
 			return err
 		}
 		go HandleConn(conn, s.store, s.authority)
+	}
+}
+
+// Shutdown closes the listener and waits for ListenAndServe to return.
+// It is safe to call Shutdown if ListenAndServe was never started.
+func (s *Server) Shutdown() {
+	s.mu.Lock()
+	ln := s.ln
+	s.mu.Unlock()
+	if ln != nil {
+		ln.Close()
+		<-s.done
 	}
 }

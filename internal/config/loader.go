@@ -19,7 +19,12 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
 	}
+	return LoadBytes(data)
+}
 
+// LoadBytes parses a Config from raw YAML bytes and applies the same defaults
+// and normalisation as Load. It does not perform structural validation.
+func LoadBytes(data []byte) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config yaml: %w", err)
@@ -32,6 +37,11 @@ func Load(path string) (*Config, error) {
 			m = TargetModeB
 		}
 		cfg.Replicator.Units[i].Target.Mode = m
+	}
+
+	// Apply WebUI defaults.
+	if cfg.WebUI.Listen == "" {
+		cfg.WebUI.Listen = ":8080"
 	}
 
 	return &cfg, nil
