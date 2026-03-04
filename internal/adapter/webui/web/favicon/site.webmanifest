@@ -1,0 +1,19 @@
+{
+  "name": "Aegis",
+  "short_name": "Aegis",
+  "icons": [
+    {
+      "src": "/favicon/web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "theme_color": "#080820",
+  "background_color": "#080820",
+  "display": "standalone"
+}

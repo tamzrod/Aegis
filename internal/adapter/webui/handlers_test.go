@@ -1206,3 +1206,37 @@ func TestHandleChangePasswordEmptyPassword(t *testing.T) {
 		t.Fatalf("want 400, got %d", rec.Code)
 	}
 }
+
+// TestFaviconRoutesPublic verifies that /favicon/* assets are served without a session cookie.
+func TestFaviconRoutesPublic(t *testing.T) {
+	paths := []struct {
+		path        string
+		contentType string
+	}{
+		{"/favicon/favicon.ico", "image/vnd.microsoft.icon"},
+		{"/favicon/favicon.svg", "image/svg+xml"},
+		{"/favicon/favicon-96x96.png", "image/png"},
+		{"/favicon/apple-touch-icon.png", "image/png"},
+		{"/favicon/site.webmanifest", "application/manifest+json"},
+		{"/favicon/web-app-manifest-192x192.png", "image/png"},
+		{"/favicon/web-app-manifest-512x512.png", "image/png"},
+	}
+
+	mgr := &mockManager{}
+	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
+
+	for _, tc := range paths {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s: want 200, got %d", tc.path, rec.Code)
+			continue
+		}
+		ct := rec.Header().Get("Content-Type")
+		if !strings.HasPrefix(ct, tc.contentType) {
+			t.Errorf("GET %s: want Content-Type %q, got %q", tc.path, tc.contentType, ct)
+		}
+	}
+}

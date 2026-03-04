@@ -4,6 +4,7 @@ package webui
 import (
 	"embed"
 	"io/fs"
+	"mime"
 	"net/http"
 
 	"github.com/tamzrod/Aegis/internal/config"
@@ -12,6 +13,11 @@ import (
 
 //go:embed web
 var webFiles embed.FS
+
+func init() {
+	// Register the web app manifest MIME type so browsers recognise the manifest link.
+	_ = mime.AddExtensionType(".webmanifest", "application/manifest+json")
+}
 
 // Manager is the interface the WebUI server uses to interact with the running Aegis runtime.
 // It is implemented by the concrete Runtime in cmd/aegis.
@@ -104,6 +110,8 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 		http.ServeFileFS(w, r, webFS, "app.js")
 	})
 	mux.HandleFunc("/api/login", h.handleLogin)
+	faviconFS, _ := fs.Sub(webFiles, "web/favicon")
+	mux.Handle("/favicon/", http.StripPrefix("/favicon/", http.FileServer(http.FS(faviconFS))))
 
 	// Protected API routes — all require a valid session cookie.
 	protected := http.NewServeMux()
