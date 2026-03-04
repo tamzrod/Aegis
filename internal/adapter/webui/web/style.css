@@ -363,3 +363,63 @@ select.field-input {
 .toast.hidden {
   display: none;
 }
+
+/* ---- Login page ---- */
+.login-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+}
+
+.login-card {
+  background: #12122a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 2rem 2.5rem;
+  width: 320px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+
+.login-card__title {
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #a0c4ff;
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.login-field {
+  margin-bottom: 1rem;
+}
+
+.login-field label {
+  display: block;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #888;
+  margin-bottom: 0.35rem;
+}
+
+.login-field .field-input {
+  max-width: 100%;
+}
+
+.login-btn {
+  width: 100%;
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.85rem;
+  font-size: 0.88rem;
+}
+
+.login-error {
+  display: none;
+  color: #ff6b6b;
+  font-size: 0.82rem;
+  margin-top: 0.75rem;
+  text-align: center;
+}

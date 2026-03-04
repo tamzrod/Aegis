@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis Login</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="login-wrap">
+        <div class="login-card">
+            <div class="login-card__title">Aegis</div>
+            <div class="login-field">
+                <label for="username">Username</label>
+                <input class="field-input" type="text" id="username" name="username" autocomplete="username" autofocus>
+            </div>
+            <div class="login-field">
+                <label for="password">Password</label>
+                <input class="field-input" type="password" id="password" name="password" autocomplete="current-password">
+            </div>
+            <button class="btn-primary login-btn" id="loginBtn">Login</button>
+            <div class="login-error" id="loginError">Invalid username or password.</div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('loginBtn').addEventListener('click', doLogin);
+        document.getElementById('password').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') doLogin();
+        });
+
+        async function doLogin() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const errEl = document.getElementById('loginError');
+            errEl.style.display = 'none';
+
+            try {
+                const resp = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({username, password})
+                });
+                if (resp.ok) {
+                    window.location.href = '/';
+                } else {
+                    errEl.style.display = 'block';
+                }
+            } catch {
+                errEl.style.display = 'block';
+            }
+        }
+    </script>
+</body>
+</html>

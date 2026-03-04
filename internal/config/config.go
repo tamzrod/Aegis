@@ -29,7 +29,7 @@ type Config struct {
 	// It is disabled by default; omitting the section is safe.
 	WebUI WebUIConfig `yaml:"webui"`
 
-	// Auth holds HTTP Basic Auth credentials for the WebUI.
+	// Auth holds form-based session authentication credentials for the WebUI.
 	// Authentication is always enforced. When the section is absent or fields are empty,
 	// LoadBytes applies the defaults: username=admin, password=admin.
 	// PasswordHash must be a bcrypt hash.
@@ -40,7 +40,7 @@ type Config struct {
 	Debug DebugConfig `yaml:"debug"`
 }
 
-// AuthConfig holds HTTP Basic Auth credentials for the WebUI.
+// AuthConfig holds form-based session authentication credentials for the WebUI.
 // Authentication is always enforced. Default values (username=admin, password=admin)
 // are applied by LoadBytes when the section is absent.
 // PasswordHash must be a bcrypt hash of the password.
