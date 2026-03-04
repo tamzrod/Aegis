@@ -9,6 +9,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MinimalConfigYAML is the default content written when no config file is found.
+const MinimalConfigYAML = "replicator:\n  units: []\n"
+
+// CreateMinimal writes a minimal valid config file to path.
+// It is called at startup when no config file exists.
+func CreateMinimal(path string) error {
+	return os.WriteFile(path, []byte(MinimalConfigYAML), 0600)
+}
+
 // Load reads a YAML configuration file from path and returns the parsed Config.
 // This function applies defaults (e.g. target.mode defaults to "B") and
 // normalises field values (e.g. target.mode is uppercased) after YAML parsing.

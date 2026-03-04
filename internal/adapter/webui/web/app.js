@@ -449,7 +449,7 @@ document.getElementById('btn-apply-config').addEventListener('click', async () =
       return;
     }
     originalConfig = deepCopy(workingConfig);
-    showToast('Configuration applied.');
+    showToast('Configuration saved.');
   } catch (e) {
     showToast('Apply failed: ' + e.message);
   }
@@ -508,6 +508,42 @@ document.getElementById('btn-delete').addEventListener('click', () => {
   workingConfig.devices.splice(idx, 1);
   selectedDeviceKey = null;
   renderAll();
+});
+
+// ---------- Export Config ----------
+
+document.getElementById('btn-export-config').addEventListener('click', () => {
+  window.location.href = '/api/config/export';
+});
+
+// ---------- Import Config ----------
+
+document.getElementById('btn-import-config').addEventListener('click', () => {
+  document.getElementById('input-import-file').click();
+});
+
+document.getElementById('input-import-file').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const res = await fetch('/api/config/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/yaml' },
+      body: text,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('Import failed: ' + (body.error || 'HTTP ' + res.status));
+      return;
+    }
+    showToast('Configuration imported.');
+    await loadView();
+  } catch (err) {
+    showToast('Import failed: ' + err.message);
+  }
+  // Reset so the same file can be re-imported if needed.
+  e.target.value = '';
 });
 
 loadView();

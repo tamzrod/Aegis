@@ -349,11 +349,11 @@ func TestPutConfigApplyValidationFailure(t *testing.T) {
 }
 
 // TestPutConfigApplyRebuildFailure verifies that PUT /api/config/apply returns
-// 500 with {"error":"runtime rebuild failed"} when the runtime rebuild fails.
+// 500 with {"error":"runtime rebuild failed"} when applying the config fails.
 func TestPutConfigApplyRebuildFailure(t *testing.T) {
 	mgr := &mockManager{
-		yaml:       []byte(validUnitYAML),
-		rebuildErr: errors.New("port already in use"),
+		yaml:     []byte(validUnitYAML),
+		applyErr: errors.New("port already in use"),
 	}
 	h := newTestServer(mgr)
 
@@ -493,6 +493,99 @@ func TestRuntimeStatusMethodNotAllowed(t *testing.T) {
 	h := newTestServer(mgr)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/runtime/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// TestGetConfigExport verifies that GET /api/config/export returns the active YAML
+// with Content-Disposition header for file download.
+func TestGetConfigExport(t *testing.T) {
+	mgr := &mockManager{yaml: []byte("replicator:\n  units: []\n")}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/export", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/yaml") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") {
+		t.Errorf("expected attachment Content-Disposition, got: %q", cd)
+	}
+	if body := rec.Body.String(); body != "replicator:\n  units: []\n" {
+		t.Errorf("unexpected body: %q", body)
+	}
+}
+
+// TestGetConfigExportMethodNotAllowed verifies that POST /api/config/export returns 405.
+func TestGetConfigExportMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{yaml: []byte("replicator: {}")}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/export", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// TestPostConfigImportSuccess verifies that POST /api/config/import with valid YAML returns 200.
+func TestPostConfigImportSuccess(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/import", strings.NewReader("replicator:\n  units: []\n"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "imported" {
+		t.Errorf("want status=imported, got %q", resp["status"])
+	}
+}
+
+// TestPostConfigImportFailure verifies that POST /api/config/import returns 400 on apply error.
+func TestPostConfigImportFailure(t *testing.T) {
+	mgr := &mockManager{applyErr: errors.New("replicator.units: at least one unit required")}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/import", strings.NewReader("bad: yaml"))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "error") {
+		t.Errorf("expected JSON error field in body: %q", body)
+	}
+}
+
+// TestPostConfigImportMethodNotAllowed verifies that GET /api/config/import returns 405.
+func TestPostConfigImportMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/import", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 

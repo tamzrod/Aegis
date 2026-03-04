@@ -12,6 +12,9 @@ import (
 // osExit is a package-level variable so tests can intercept os.Exit.
 var osExit = os.Exit
 
+// maxConfigBodyBytes is the maximum accepted request body size for config endpoints.
+const maxConfigBodyBytes = 1 << 20 // 1 MiB
+
 type handlers struct {
 	mgr Manager
 	sp  StatusProvider
@@ -39,7 +42,7 @@ func (h *handlers) getConfigRaw(w http.ResponseWriter, _ *http.Request) {
 
 // putConfigRaw validates, writes to disk, and soft-rebuilds the runtime.
 func (h *handlers) putConfigRaw(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MiB limit
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxConfigBodyBytes))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
 		return
@@ -88,6 +91,44 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// handleConfigExport serves GET /api/config/export.
+// It returns the active configuration as a downloadable config.yaml file.
+func (h *handlers) handleConfigExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	data := h.mgr.GetActiveConfigYAML()
+	w.Header().Set("Content-Type", "text/yaml; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="config.yaml"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// handleConfigImport serves POST /api/config/import.
+// It accepts raw YAML bytes, validates, writes to disk, and reloads the runtime.
+func (h *handlers) handleConfigImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxConfigBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+
+	if err := h.mgr.ApplyConfig(body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "imported"})
 }
 
 // handleRuntimeStatus serves GET /api/runtime/status.

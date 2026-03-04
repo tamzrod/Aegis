@@ -52,6 +52,8 @@ func NewServer(listen string, mgr Manager) *Server {
 	mux.HandleFunc("/api/config/view", h.handleConfigView)
 	mux.HandleFunc("/api/config/apply", h.handleConfigApply)
 	mux.HandleFunc("/api/config/raw", h.handleConfigRaw)
+	mux.HandleFunc("/api/config/export", h.handleConfigExport)
+	mux.HandleFunc("/api/config/import", h.handleConfigImport)
 	mux.HandleFunc("/api/reload", h.handleReload)
 	mux.HandleFunc("/api/restart", h.handleRestart)
 	mux.HandleFunc("/api/runtime/status", h.handleRuntimeStatus)

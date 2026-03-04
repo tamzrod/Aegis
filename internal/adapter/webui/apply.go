@@ -22,7 +22,7 @@ func (h *handlers) handleConfigApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MiB limit
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxConfigBodyBytes))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
 		return
@@ -62,8 +62,8 @@ func (h *handlers) handleConfigApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Rebuild atomically restarts the runtime with the new config.
-	if err := h.mgr.Rebuild(cfg, newYAML); err != nil {
+	// ApplyConfig validates, writes to disk, and atomically restarts the runtime.
+	if err := h.mgr.ApplyConfig(newYAML); err != nil {
 		writeError(w, http.StatusInternalServerError, "runtime rebuild failed")
 		return
 	}
