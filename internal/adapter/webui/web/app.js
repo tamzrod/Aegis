@@ -485,7 +485,7 @@ function renderDeviceList() {
     dot.className = 'device-status-dot device-' + statusObj.status;
     if (statusObj.polling) {
       dot.classList.add('device-blink');
-      setTimeout(() => dot.classList.remove('device-blink'), 600);
+      setTimeout(() => dot.classList.remove('device-blink'), 250);
     }
     li.appendChild(dot);
 
