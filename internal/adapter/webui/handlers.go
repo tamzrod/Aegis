@@ -4,13 +4,10 @@ package webui
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
-	"os"
 	"time"
 )
-
-// osExit is a package-level variable so tests can intercept os.Exit.
-var osExit = os.Exit
 
 // maxConfigBodyBytes is the maximum accepted request body size for config endpoints.
 const maxConfigBodyBytes = 1 << 20 // 1 MiB
@@ -71,7 +68,7 @@ func (h *handlers) handleReload(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleRestart returns 200 then calls os.Exit(0) after a short delay.
+// handleRestart returns 200 then soft-restarts the replication engine after a short delay.
 func (h *handlers) handleRestart(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -82,7 +79,11 @@ func (h *handlers) handleRestart(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		osExit(0)
+		if err := h.mgr.ReloadFromDisk(); err != nil {
+			log.Printf("aegis: soft restart failed: %v", err)
+		} else {
+			log.Printf("aegis: soft restart completed successfully")
+		}
 	}()
 }
 

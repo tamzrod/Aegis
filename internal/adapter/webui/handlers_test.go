@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/tamzrod/Aegis/internal/config"
 	"github.com/tamzrod/Aegis/internal/runtime"
@@ -15,16 +17,20 @@ import (
 
 // mockManager implements Manager for testing.
 type mockManager struct {
-	yaml       []byte
-	applyErr   error
-	reloadErr  error
-	rebuildErr error
+	yaml         []byte
+	applyErr     error
+	reloadErr    error
+	rebuildErr   error
+	reloadCalled int32 // accessed atomically
 }
 
-func (m *mockManager) GetActiveConfigYAML() []byte                              { return m.yaml }
-func (m *mockManager) ApplyConfig(b []byte) error                               { return m.applyErr }
-func (m *mockManager) ReloadFromDisk() error                                    { return m.reloadErr }
-func (m *mockManager) Rebuild(_ *config.Config, _ []byte) error                 { return m.rebuildErr }
+func (m *mockManager) GetActiveConfigYAML() []byte  { return m.yaml }
+func (m *mockManager) ApplyConfig(b []byte) error   { return m.applyErr }
+func (m *mockManager) ReloadFromDisk() error {
+	atomic.AddInt32(&m.reloadCalled, 1)
+	return m.reloadErr
+}
+func (m *mockManager) Rebuild(_ *config.Config, _ []byte) error { return m.rebuildErr }
 
 func newTestServer(mgr Manager) http.Handler {
 	s := NewServer(":0", mgr)
@@ -113,14 +119,8 @@ func TestReloadFailure(t *testing.T) {
 	}
 }
 
-// TestRestartReturns200 verifies that POST /api/restart returns 200.
+// TestRestartReturns200 verifies that POST /api/restart returns 200 and calls ReloadFromDisk.
 func TestRestartReturns200(t *testing.T) {
-	// Intercept os.Exit so the test process is not killed.
-	orig := osExit
-	exited := false
-	osExit = func(code int) { exited = true }
-	defer func() { osExit = orig }()
-
 	mgr := &mockManager{}
 	h := newTestServer(mgr)
 
@@ -131,7 +131,12 @@ func TestRestartReturns200(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", rec.Code)
 	}
-	_ = exited // exit happens in a goroutine; we just verify 200 response
+
+	// Wait long enough for the goroutine (100ms delay) to call ReloadFromDisk.
+	time.Sleep(300 * time.Millisecond)
+	if atomic.LoadInt32(&mgr.reloadCalled) == 0 {
+		t.Error("want ReloadFromDisk to be called after restart, but it was not")
+	}
 }
 
 // TestWebUIDisabledByDefault verifies that the default WebUIConfig has enabled=false.
