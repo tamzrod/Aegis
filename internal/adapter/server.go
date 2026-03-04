@@ -17,6 +17,7 @@ type Server struct {
 	listen    string
 	store     core.Store
 	authority Enforcer
+	debug     bool
 
 	mu   sync.Mutex
 	ln   net.Listener
@@ -24,11 +25,13 @@ type Server struct {
 }
 
 // NewServer creates a Server for the given listen address, store, and authority enforcer.
-func NewServer(listen string, store core.Store, authority Enforcer) *Server {
+// When debug is true, verbose per-request routing logs are emitted.
+func NewServer(listen string, store core.Store, authority Enforcer, debug bool) *Server {
 	return &Server{
 		listen:    listen,
 		store:     store,
 		authority: authority,
+		debug:     debug,
 		done:      make(chan struct{}),
 	}
 }
@@ -78,7 +81,7 @@ func (s *Server) ListenAndServe() error {
 		if err != nil {
 			return err
 		}
-		go HandleConn(conn, s.store, s.authority)
+		go HandleConn(conn, s.store, s.authority, s.debug)
 	}
 }
 

@@ -32,7 +32,9 @@ type Enforcer interface {
 //
 // State sealing is enforced here: if a memory block has a sealing flag coil
 // and its value is 0 (sealed), the server returns Device Busy (0x06) for all requests.
-func HandleConn(conn net.Conn, store core.Store, authority Enforcer) {
+//
+// When debug is true, verbose per-request routing logs are emitted.
+func HandleConn(conn net.Conn, store core.Store, authority Enforcer, debug bool) {
 	defer conn.Close()
 
 	localAddr, ok := conn.LocalAddr().(*net.TCPAddr)
@@ -53,8 +55,10 @@ func HandleConn(conn net.Conn, store core.Store, authority Enforcer) {
 
 		// Per-target authority enforcement: check before state sealing and dispatch.
 		addr, qty := extractAddressQuantity(req)
-		log.Printf("adapter: ROUTING REQUEST port=%d unit=%d fc=%d address=%d quantity=%d",
-			port, req.UnitID, req.FunctionCode, addr, qty)
+		if debug {
+			log.Printf("adapter: ROUTING REQUEST port=%d unit=%d fc=%d address=%d quantity=%d",
+				port, req.UnitID, req.FunctionCode, addr, qty)
+		}
 		if authority != nil {
 			if pdu, rejected := authority.Enforce(port, uint16(req.UnitID), req.FunctionCode, addr, qty); rejected {
 				_, _ = conn.Write(BuildResponse(req, pdu))
@@ -85,7 +89,7 @@ func HandleConn(conn net.Conn, store core.Store, authority Enforcer) {
 			}
 		}
 
-		pdu := DispatchMemory(store, req)
+		pdu := DispatchMemory(store, req, debug)
 		if pdu == nil {
 			return
 		}
