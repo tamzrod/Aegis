@@ -70,3 +70,13 @@ func (s *BlockHealthStore) GetBlockHealth(unitID string, blockIdx int) (timeout 
 	h, ok := s.Get(BlockHealthKey{UnitID: unitID, BlockIdx: blockIdx})
 	return h.Timeout, h.ConsecutiveErrors, h.LastExceptionCode, ok
 }
+
+// GetLastSuccess returns the time of the last successful poll for one read block.
+// Returns the zero time and false if no successful poll has been recorded yet.
+func (s *BlockHealthStore) GetLastSuccess(unitID string, blockIdx int) (time.Time, bool) {
+	h, ok := s.Get(BlockHealthKey{UnitID: unitID, BlockIdx: blockIdx})
+	if !ok {
+		return time.Time{}, false
+	}
+	return h.LastSuccess, true
+}

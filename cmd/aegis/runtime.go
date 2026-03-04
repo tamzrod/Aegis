@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/tamzrod/Aegis/internal/adapter"
 	"github.com/tamzrod/Aegis/internal/config"
@@ -199,13 +200,16 @@ func (r *RuntimeManager) DeviceStatuses() []runtimepkg.DeviceStatus {
 		return nil
 	}
 
+	now := time.Now()
 	out := make([]runtimepkg.DeviceStatus, 0, len(cfg.Replicator.Units))
 	for _, u := range cfg.Replicator.Units {
 		status := "offline"
+		polling := false
 		if running && hs != nil {
 			status = deriveDeviceStatus(hs, u)
+			polling = isDevicePolling(hs, u, now)
 		}
-		out = append(out, runtimepkg.DeviceStatus{ID: u.ID, Status: status})
+		out = append(out, runtimepkg.DeviceStatus{ID: u.ID, Status: status, Polling: polling})
 	}
 	return out
 }
@@ -231,6 +235,22 @@ func deriveDeviceStatus(hs *engine.BlockHealthStore, u config.UnitConfig) string
 		return "error"
 	}
 	return "online"
+}
+
+// activePollingThreshold is the window within which a successful poll is
+// considered "recent" for the purposes of the polling activity indicator.
+const activePollingThreshold = 10 * time.Second
+
+// isDevicePolling returns true if any read block for the unit had a successful
+// poll within activePollingThreshold, indicating active polling activity.
+func isDevicePolling(hs *engine.BlockHealthStore, u config.UnitConfig, now time.Time) bool {
+	threshold := now.Add(-activePollingThreshold)
+	for idx := range u.Reads {
+		if t, ok := hs.GetLastSuccess(u.ID, idx); ok && t.After(threshold) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetActiveConfigYAML returns a copy of the active config YAML bytes.
