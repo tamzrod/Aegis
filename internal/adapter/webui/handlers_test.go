@@ -9,19 +9,22 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tamzrod/Aegis/internal/config"
 	"github.com/tamzrod/Aegis/internal/runtime"
 )
 
 // mockManager implements Manager for testing.
 type mockManager struct {
-	yaml      []byte
-	applyErr  error
-	reloadErr error
+	yaml       []byte
+	applyErr   error
+	reloadErr  error
+	rebuildErr error
 }
 
-func (m *mockManager) GetActiveConfigYAML() []byte { return m.yaml }
-func (m *mockManager) ApplyConfig(b []byte) error   { return m.applyErr }
-func (m *mockManager) ReloadFromDisk() error        { return m.reloadErr }
+func (m *mockManager) GetActiveConfigYAML() []byte                              { return m.yaml }
+func (m *mockManager) ApplyConfig(b []byte) error                               { return m.applyErr }
+func (m *mockManager) ReloadFromDisk() error                                    { return m.reloadErr }
+func (m *mockManager) Rebuild(_ *config.Config, _ []byte) error                 { return m.rebuildErr }
 
 func newTestServer(mgr Manager) http.Handler {
 	s := NewServer(":0", mgr)
@@ -305,8 +308,8 @@ func TestPutConfigApplySuccess(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp["status"] != "ok" {
-		t.Errorf("want status=ok, got %q", resp["status"])
+	if resp["status"] != "applied" {
+		t.Errorf("want status=applied, got %q", resp["status"])
 	}
 }
 
@@ -342,6 +345,45 @@ func TestPutConfigApplyValidationFailure(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, "error") {
 		t.Errorf("expected JSON error field in body: %q", body)
+	}
+}
+
+// TestPutConfigApplyRebuildFailure verifies that PUT /api/config/apply returns
+// 500 with {"error":"runtime rebuild failed"} when the runtime rebuild fails.
+func TestPutConfigApplyRebuildFailure(t *testing.T) {
+	mgr := &mockManager{
+		yaml:       []byte(validUnitYAML),
+		rebuildErr: errors.New("port already in use"),
+	}
+	h := newTestServer(mgr)
+
+	body := `{
+		"devices": [{
+			"key": "plc1",
+			"display_name": "PLC1",
+			"source": {"endpoint":"192.168.1.100:502","unit_id":1,"timeout_ms":1000,"device_name":"PLC1"},
+			"reads":  [{"fc":3,"address":0,"quantity":10,"interval_ms":1000}],
+			"target": {"port":502,"unit_id":1,"status_unit_id":255,"status_slot":0,"mode":"B"}
+		}],
+		"selected_key": "plc1"
+	}`
+
+	req := httptest.NewRequest(http.MethodPut, "/api/config/apply", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("want 500, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "runtime rebuild failed" {
+		t.Errorf("want error=%q, got %q", "runtime rebuild failed", resp["error"])
 	}
 }
 

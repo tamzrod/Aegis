@@ -15,7 +15,7 @@ import (
 // It accepts a configView JSON body, merges it into the currently active config
 // (preserving fields not represented in the view model, such as target offsets
 // and the webui section), marshals the result back to YAML, validates it, and
-// hands it to the manager for runtime rebuild.
+// calls RuntimeManager.Rebuild to atomically apply the new config at runtime.
 func (h *handlers) handleConfigApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -51,15 +51,26 @@ func (h *handlers) handleConfigApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// ApplyConfig runs LoadBytes + Validate + disk write + runtime rebuild.
-	if err := h.mgr.ApplyConfig(newYAML); err != nil {
+	// Validate the merged config before calling Rebuild.
+	cfg, err := config.LoadBytes(newYAML)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "parse merged config: "+err.Error())
+		return
+	}
+	if err := config.Validate(cfg); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Rebuild atomically restarts the runtime with the new config.
+	if err := h.mgr.Rebuild(cfg, newYAML); err != nil {
+		writeError(w, http.StatusInternalServerError, "runtime rebuild failed")
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "applied"})
 }
 
 // mergeViewIntoConfig writes the device list from v into base, preserving any

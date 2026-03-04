@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"net/http"
 
+	"github.com/tamzrod/Aegis/internal/config"
 	"github.com/tamzrod/Aegis/internal/runtime"
 )
 
@@ -21,6 +22,9 @@ type Manager interface {
 	ApplyConfig(yamlBytes []byte) error
 	// ReloadFromDisk re-reads the config file, validates it, and soft-rebuilds the runtime.
 	ReloadFromDisk() error
+	// Rebuild atomically stops the running engine and starts it with the new config.
+	// The caller is responsible for validating cfg before calling Rebuild.
+	Rebuild(cfg *config.Config, yamlBytes []byte) error
 }
 
 // StatusProvider is an optional extension of Manager for exposing runtime state.
