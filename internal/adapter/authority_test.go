@@ -757,6 +757,107 @@ func TestMultiUnitRoutingSharedPort(t *testing.T) {
 	}
 }
 
+// TestDebugIllegalDataAddressMultiUnit reproduces the problem scenario where unit 1
+// responds correctly but unit 2 returns Illegal Data Address.  It uses the exact
+// parameters from the problem config: port=11502, FC3, address=0, quantity=10 for
+// both unit_id=1 and unit_id=2.  The authority registry uses mode B (strict), which
+// requires both the block to be healthy and the address range to be covered.  Both
+// requests must return data (not an exception), confirming that independent memory
+// surfaces exist for each unit ID and that the full 10-register range is covered.
+func TestDebugIllegalDataAddressMultiUnit(t *testing.T) {
+	// Build independent memory surfaces: 10 holding registers [0-9] for each unit.
+	store := core.NewMemStore()
+	for _, uid := range []uint16{1, 2} {
+		mem, err := core.NewMemory(core.MemoryLayouts{
+			HoldingRegs: &core.AreaLayout{Start: 0, Size: 10},
+		})
+		if err != nil {
+			t.Fatalf("NewMemory unit_id=%d: %v", uid, err)
+		}
+		if err := store.Add(core.MemoryID{Port: 11502, UnitID: uid}, mem); err != nil {
+			t.Fatalf("store.Add unit_id=%d: %v", uid, err)
+		}
+	}
+
+	health := newMockHealth()
+	health.setHealthy("new-device-1", 0)
+	health.setHealthy("new-device-2", 0)
+	registry := buildMultiUnitRegistry(health)
+
+	// Verify the registry has authority entries for both unit IDs: mode B rejects
+	// writes (0x01) only for registered targets, so a rejected write confirms the
+	// entry is present.
+	for _, uid := range []uint16{1, 2} {
+		if _, rejected := registry.Enforce(11502, uid, 6, 0, 1); !rejected {
+			t.Errorf("unit_id=%d: authority entry missing from registry", uid)
+		}
+	}
+
+	// buildFC3Frame10 builds an FC3 frame reading 10 registers from address 0.
+	buildFC3Frame10 := func(unitID byte) []byte {
+		frame := make([]byte, 12)
+		binary.BigEndian.PutUint16(frame[0:2], 1)    // txID
+		binary.BigEndian.PutUint16(frame[2:4], 0)    // protoID
+		binary.BigEndian.PutUint16(frame[4:6], 6)    // length
+		frame[6] = unitID                             // unit_id
+		frame[7] = 3                                  // FC3
+		binary.BigEndian.PutUint16(frame[8:10], 0)   // address = 0
+		binary.BigEndian.PutUint16(frame[10:12], 10) // quantity = 10
+		return frame
+	}
+
+	readResponse := func(unitID byte) []byte {
+		t.Helper()
+		frame := buildFC3Frame10(unitID)
+
+		srvRaw, cli := net.Pipe()
+		srv := &fakeConn{Conn: srvRaw, localAddr: &net.TCPAddr{Port: 11502}}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			HandleConn(srv, store, registry)
+		}()
+
+		if _, err := cli.Write(frame); err != nil {
+			t.Fatalf("write request unit_id=%d: %v", unitID, err)
+		}
+		mbap := make([]byte, 7)
+		if _, err := io.ReadFull(cli, mbap); err != nil {
+			t.Fatalf("read MBAP unit_id=%d: %v", unitID, err)
+		}
+		length := binary.BigEndian.Uint16(mbap[4:6])
+		pdu := make([]byte, int(length)-1)
+		if _, err := io.ReadFull(cli, pdu); err != nil {
+			t.Fatalf("read PDU unit_id=%d: %v", unitID, err)
+		}
+		cli.Close()
+		<-done
+		return pdu
+	}
+
+	// Both unit_id=1 and unit_id=2 must return data (no exception).
+	// An exception PDU has the high bit of pdu[0] set.
+	for _, uid := range []byte{1, 2} {
+		pdu := readResponse(uid)
+		if len(pdu) == 0 {
+			t.Errorf("unit_id=%d: empty response", uid)
+			continue
+		}
+		if pdu[0]&0x80 != 0 {
+			t.Errorf("unit_id=%d: expected data response, got exception PDU %v (exception code 0x%02X)",
+				uid, pdu, pdu[1])
+		}
+		// FC3 success: pdu[0]=0x03, pdu[1]=byte count (20 for 10 regs), pdu[2..21]=register data
+		if pdu[0] != 0x03 {
+			t.Errorf("unit_id=%d: expected FC3 response (0x03), got 0x%02X", uid, pdu[0])
+		}
+		expectedByteCount := byte(10 * 2) // 10 registers × 2 bytes
+		if len(pdu) < 2 || pdu[1] != expectedByteCount {
+			t.Errorf("unit_id=%d: expected byte count %d, got PDU: %v", uid, expectedByteCount, pdu)
+		}
+	}
+}
+
 // --------------------
 // Helpers
 // --------------------

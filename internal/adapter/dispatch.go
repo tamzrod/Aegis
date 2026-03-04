@@ -3,6 +3,7 @@ package adapter
 
 import (
 	"encoding/binary"
+	"log"
 
 	"github.com/tamzrod/Aegis/internal/core"
 )
@@ -49,6 +50,7 @@ func resolveMemory(store core.Store, req *Request) (*core.Memory, bool) {
 	}
 	mem, err := store.MustGet(memID)
 	if err != nil {
+		log.Printf("adapter: memory surface port=%d unit=%d not found → Illegal Data Address", req.Port, req.UnitID)
 		return nil, false
 	}
 	return mem, true
@@ -139,9 +141,13 @@ func handleReadRegs(store core.Store, req *Request, area core.Area) []byte {
 
 	buf := make([]byte, int(decoded.Quantity)*2)
 	if err := mem.ReadRegs(area, decoded.Address, decoded.Quantity, buf); err != nil {
+		log.Printf("adapter: request outside surface → Illegal Data Address (port=%d unit=%d fc=%d addr=%d qty=%d)",
+			req.Port, req.UnitID, req.FunctionCode, decoded.Address, decoded.Quantity)
 		return BuildExceptionPDU(req.FunctionCode, 0x02)
 	}
 
+	log.Printf("adapter: request covered → serving data (port=%d unit=%d fc=%d addr=%d qty=%d)",
+		req.Port, req.UnitID, req.FunctionCode, decoded.Address, decoded.Quantity)
 	return BuildReadResponsePDU(req.FunctionCode, buf)
 }
 

@@ -3,6 +3,8 @@ package config
 
 import (
 	"fmt"
+	"log"
+	"strings"
 
 	"github.com/tamzrod/Aegis/internal/core"
 )
@@ -91,6 +93,24 @@ func BuildMemStore(cfg *Config) (*core.MemStore, error) {
 				sk.port, sk.unitID, err,
 			)
 		}
+
+		// Log each area that was allocated for this surface.
+		var areas []string
+		for fc, bounds := range fcMap {
+			var areaName string
+			switch fc {
+			case 1:
+				areaName = "coils"
+			case 2:
+				areaName = "discrete"
+			case 3:
+				areaName = "holding"
+			case 4:
+				areaName = "input"
+			}
+			areas = append(areas, fmt.Sprintf("%s[%d-%d]", areaName, bounds.minStart, bounds.maxEnd-1))
+		}
+		log.Printf("config: memory surface created port=%d unit=%d %s", sk.port, sk.unitID, strings.Join(areas, " "))
 	}
 
 	// --- Status memory surfaces ---
@@ -139,6 +159,7 @@ func BuildMemStore(cfg *Config) (*core.MemStore, error) {
 				sk.port, sk.statusUnitID, err,
 			)
 		}
+		log.Printf("config: memory surface created port=%d unit=%d holding[0-%d] (status)", sk.port, sk.statusUnitID, size-1)
 	}
 
 	return store, nil
