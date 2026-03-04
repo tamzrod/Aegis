@@ -127,14 +127,26 @@ body {
   background: #12122a;
 }
 
-.section-title {
+/* ---- Section header (title + action buttons) ---- */
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 0.5rem 0.85rem;
+  border-bottom: 1px solid #333;
+}
+
+.section-label {
   font-size: 0.8rem;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #a0c4ff;
-  border-bottom: 1px solid #333;
+}
+
+.section-actions {
+  display: flex;
+  gap: 0.35rem;
 }
 
 .section-body {
@@ -162,16 +174,40 @@ body {
   color: #e0e0e0;
 }
 
+/* ---- Field inputs (edit mode) ---- */
+.field-input {
+  background: #1a1a3a;
+  border: 1px solid #4a4a7a;
+  border-radius: 3px;
+  color: #e0e0e0;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.875rem;
+  width: 100%;
+  max-width: 260px;
+}
+
+.field-input:focus {
+  outline: none;
+  border-color: #4a9eff;
+}
+
+select.field-input {
+  cursor: pointer;
+}
+
 /* ---- Reads list ---- */
 .reads-list {
   list-style: none;
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  margin-bottom: 0.6rem;
 }
 
-.reads-list li {
+/* ---- Read row (view mode) ---- */
+.read-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 0.875rem;
   font-family: 'Courier New', monospace;
   color: #c8e6c9;
@@ -179,6 +215,78 @@ body {
   border: 1px solid #2a2a4a;
   border-radius: 4px;
   padding: 0.35rem 0.6rem;
+}
+
+.read-row-text {
+  flex: 1;
+}
+
+.read-actions {
+  display: flex;
+  gap: 0.3rem;
+  margin-left: 0.5rem;
+  flex-shrink: 0;
+}
+
+/* ---- Read editor (inline) ---- */
+.read-editor {
+  background: #0d0d1a;
+  border: 1px solid #4a4a7a;
+  border-radius: 4px;
+  padding: 0.5rem 0.6rem;
+}
+
+.read-editor-fields {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: 0.3rem 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  font-family: system-ui, sans-serif;
+}
+
+.read-editor-fields label {
+  color: #888;
+}
+
+.read-editor-actions {
+  display: flex;
+  gap: 0.35rem;
+}
+
+/* ---- Small buttons (section controls) ---- */
+.btn-sm {
+  padding: 0.2rem 0.55rem;
+  border: 1px solid #444;
+  border-radius: 3px;
+  background: #2d2d4e;
+  color: #e0e0e0;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.btn-sm:hover {
+  background: #3d3d6e;
+}
+
+.btn-sm.btn-save {
+  border-color: #2a8bc0;
+  background: #1a4a6a;
+}
+
+.btn-sm.btn-save:hover {
+  background: #2a6a9a;
+}
+
+.btn-sm.btn-danger {
+  border-color: #8b2a2a;
+  background: #5a1a1a;
+  color: #ffaaaa;
+}
+
+.btn-sm.btn-danger:hover {
+  background: #7a2a2a;
 }
 
 /* ---- Buttons ---- */
