@@ -28,6 +28,18 @@ type Config struct {
 	// WebUI declares the optional read-only HTTP interface.
 	// It is disabled by default; omitting the section is safe.
 	WebUI WebUIConfig `yaml:"webui"`
+
+	// Debug contains optional developer/diagnostic flags.
+	// All flags default to false; omitting the section is safe.
+	Debug DebugConfig `yaml:"debug"`
+}
+
+// DebugConfig contains optional developer/diagnostic flags.
+// All flags default to false when the section is absent.
+type DebugConfig struct {
+	// AdapterRouting enables verbose per-request routing logs in the adapter layer.
+	// When false (default), routing logs are suppressed to keep the CLI clean.
+	AdapterRouting bool `yaml:"adapter_routing"`
 }
 
 // WebUIConfig declares the optional read-only HTTP interface.

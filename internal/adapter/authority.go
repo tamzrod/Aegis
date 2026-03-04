@@ -50,8 +50,9 @@ type targetKey struct {
 // It is built once at startup from config and is read-only at runtime.
 // It is not global: each entry is per-target (per replicator unit target).
 type AuthorityRegistry struct {
-	targets map[targetKey]targetEntry
-	health  BlockHealthReader
+	targets        map[targetKey]targetEntry
+	health         BlockHealthReader
+	adapterRouting bool
 }
 
 // BuildAuthorityRegistry constructs an AuthorityRegistry from the validated config.
@@ -102,8 +103,9 @@ func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *Autho
 	}
 
 	return &AuthorityRegistry{
-		targets: targets,
-		health:  health,
+		targets:        targets,
+		health:         health,
+		adapterRouting: cfg.Debug.AdapterRouting,
 	}
 }
 
@@ -133,11 +135,15 @@ func (r *AuthorityRegistry) Enforce(port, unitID uint16, fc uint8, address, quan
 	entry, ok := r.targets[targetKey{port: port, unitID: unitID}]
 	if !ok {
 		// No registered target — allow through without authority enforcement.
-		log.Printf("adapter: ROUTING REQUEST port=%d unit=%d → no authority entry (pass-through)", port, unitID)
+		if r.adapterRouting {
+			log.Printf("adapter: ROUTING REQUEST port=%d unit=%d → no authority entry (pass-through)", port, unitID)
+		}
 		return nil, false
 	}
 
-	log.Printf("adapter: ROUTING REQUEST port=%d unit=%d → matched %s", port, unitID, entry.replicatorID)
+	if r.adapterRouting {
+		log.Printf("adapter: ROUTING REQUEST port=%d unit=%d → matched %s", port, unitID, entry.replicatorID)
+	}
 
 	if isWriteFC(fc) {
 		if entry.mode != config.TargetModeA {
