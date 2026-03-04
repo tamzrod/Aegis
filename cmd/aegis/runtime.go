@@ -40,6 +40,13 @@ type RuntimeManager struct {
 	// listenerStatuses records the bind result for each configured port.
 	listenerStatuses []runtimepkg.ListenerStatus
 
+	// healthStore is the per-read-block health state for the current runtime.
+	// It is replaced on each rebuild and read by DeviceStatuses.
+	healthStore *engine.BlockHealthStore
+
+	// activeCfg is the most recently built config, used by DeviceStatuses.
+	activeCfg *config.Config
+
 	// state tracks the STOPPED/STARTING/RUNNING/STOPPING lifecycle.
 	state runtimepkg.RuntimeManager
 }
@@ -176,6 +183,54 @@ func (r *RuntimeManager) ListenerStatuses() []runtimepkg.ListenerStatus {
 	out := make([]runtimepkg.ListenerStatus, len(r.listenerStatuses))
 	copy(out, r.listenerStatuses)
 	return out
+}
+
+// DeviceStatuses returns the per-device operational status derived from the
+// block health store and current runtime state. If the runtime is not running,
+// all configured devices are reported as "offline".
+func (r *RuntimeManager) DeviceStatuses() []runtimepkg.DeviceStatus {
+	r.mu.Lock()
+	running := r.state.Status().Running
+	hs := r.healthStore
+	cfg := r.activeCfg
+	r.mu.Unlock()
+
+	if cfg == nil {
+		return nil
+	}
+
+	out := make([]runtimepkg.DeviceStatus, 0, len(cfg.Replicator.Units))
+	for _, u := range cfg.Replicator.Units {
+		status := "offline"
+		if running && hs != nil {
+			status = deriveDeviceStatus(hs, u)
+		}
+		out = append(out, runtimepkg.DeviceStatus{ID: u.ID, Status: status})
+	}
+	return out
+}
+
+// deriveDeviceStatus computes a single status string for a replicator unit
+// based on the aggregate health of its read blocks.
+func deriveDeviceStatus(hs *engine.BlockHealthStore, u config.UnitConfig) string {
+	anyFound := false
+	anyError := false
+	for idx := range u.Reads {
+		_, consecutiveErrors, _, found := hs.GetBlockHealth(u.ID, idx)
+		if found {
+			anyFound = true
+			if consecutiveErrors > 0 {
+				anyError = true
+			}
+		}
+	}
+	if !anyFound {
+		return "warning" // not yet polled
+	}
+	if anyError {
+		return "error"
+	}
+	return "online"
 }
 
 // GetActiveConfigYAML returns a copy of the active config YAML bytes.
@@ -384,6 +439,8 @@ func (r *RuntimeManager) rebuild(cfg *config.Config, yamlBytes []byte) error {
 	r.servers = newServers
 	r.activeConfigYAML = yamlBytes
 	r.listenerStatuses = listenerStatuses
+	r.healthStore = healthStore
+	r.activeCfg = cfg
 	r.state.SetRunning()
 	return nil
 }

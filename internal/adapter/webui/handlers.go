@@ -18,6 +18,7 @@ type handlers struct {
 	mgr Manager
 	sp  StatusProvider
 	lp  ListenerProvider
+	dp  DeviceStatusProvider
 }
 
 // handleConfigRaw serves GET /api/config/raw and PUT /api/config/raw.
@@ -90,7 +91,26 @@ func (h *handlers) handleRestart(w http.ResponseWriter, r *http.Request) {
 	}()
 }
 
-// writeError writes a JSON error response.
+// handleRuntimeDevices serves GET /api/runtime/devices.
+// It returns per-device status as a JSON array.
+func (h *handlers) handleRuntimeDevices(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var statuses interface{}
+	if h.dp != nil {
+		statuses = h.dp.DeviceStatuses()
+	} else {
+		statuses = []struct{}{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(statuses)
+}
+
 func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)

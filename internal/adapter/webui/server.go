@@ -47,6 +47,13 @@ type ListenerProvider interface {
 	ListenerStatuses() []runtime.ListenerStatus
 }
 
+// DeviceStatusProvider is an optional extension for exposing per-device health status.
+// If the concrete Manager also implements DeviceStatusProvider, the WebUI serves
+// GET /api/runtime/devices with the result of DeviceStatuses().
+type DeviceStatusProvider interface {
+	DeviceStatuses() []runtime.DeviceStatus
+}
+
 // Server is the embedded WebUI HTTP server.
 type Server struct {
 	listen string
@@ -66,6 +73,9 @@ func NewServer(listen string, mgr Manager) *Server {
 	if lp, ok := mgr.(ListenerProvider); ok {
 		h.lp = lp
 	}
+	if dp, ok := mgr.(DeviceStatusProvider); ok {
+		h.dp = dp
+	}
 	mux.HandleFunc("/api/config/view", h.handleConfigView)
 	mux.HandleFunc("/api/config/apply", h.handleConfigApply)
 	mux.HandleFunc("/api/config/raw", h.handleConfigRaw)
@@ -77,6 +87,7 @@ func NewServer(listen string, mgr Manager) *Server {
 	mux.HandleFunc("/api/runtime/start", h.handleRuntimeStart)
 	mux.HandleFunc("/api/runtime/stop", h.handleRuntimeStop)
 	mux.HandleFunc("/api/runtime/listeners", h.handleRuntimeListeners)
+	mux.HandleFunc("/api/runtime/devices", h.handleRuntimeDevices)
 
 	webFS, _ := fs.Sub(webFiles, "web")
 	mux.Handle("/", http.FileServer(http.FS(webFS)))

@@ -780,3 +780,77 @@ func TestRuntimeListenersMethodNotAllowed(t *testing.T) {
 		t.Fatalf("want 405, got %d", rec.Code)
 	}
 }
+
+// mockManagerWithDevices extends mockManagerWithListeners and implements DeviceStatusProvider.
+type mockManagerWithDevices struct {
+	mockManagerWithListeners
+	deviceStatuses []runtime.DeviceStatus
+}
+
+func (m *mockManagerWithDevices) DeviceStatuses() []runtime.DeviceStatus { return m.deviceStatuses }
+
+// TestRuntimeDevicesWithProvider verifies GET /api/runtime/devices returns device status JSON.
+func TestRuntimeDevicesWithProvider(t *testing.T) {
+	mgr := &mockManagerWithDevices{
+		deviceStatuses: []runtime.DeviceStatus{
+			{ID: "plc1", Status: "online"},
+			{ID: "plc2", Status: "error"},
+		},
+	}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/devices", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+	var got []runtime.DeviceStatus
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 device statuses, got %d", len(got))
+	}
+	if got[0].ID != "plc1" || got[0].Status != "online" {
+		t.Errorf("unexpected first device status: %+v", got[0])
+	}
+	if got[1].ID != "plc2" || got[1].Status != "error" {
+		t.Errorf("unexpected second device status: %+v", got[1])
+	}
+}
+
+// TestRuntimeDevicesNoProvider verifies GET /api/runtime/devices returns empty array without provider.
+func TestRuntimeDevicesNoProvider(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/devices", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "[") {
+		t.Errorf("expected JSON array in body: %q", body)
+	}
+}
+
+// TestRuntimeDevicesMethodNotAllowed verifies POST /api/runtime/devices returns 405.
+func TestRuntimeDevicesMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/devices", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}

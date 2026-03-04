@@ -91,6 +91,9 @@ body {
   cursor: pointer;
   font-size: 0.9rem;
   border-left: 3px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .device-list li:hover {
@@ -307,6 +310,21 @@ select.field-input {
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* ---- Device status dot ---- */
+.device-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #888;
+  flex-shrink: 0;
+}
+
+.device-online  { background: #22c55e; }
+.device-error   { background: #ef4444; }
+.device-offline { background: #888; }
+.device-warning { background: #f59e0b; }
 
 /* ---- Toast ---- */
 .toast {

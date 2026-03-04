@@ -3,10 +3,17 @@
 // ---------- constants ----------
 const DEFAULT_TARGET_MODE = 'B';
 
+// FC options for the read editor dropdown.
+const FC_OPTIONS = [
+  { value: 3, label: 'Read Holding Registers (3)' },
+  { value: 4, label: 'Read Input Registers (4)' },
+];
+
 // ---------- state ----------
 let originalConfig    = null;   // last-applied config (from server)
 let workingConfig     = null;   // working copy (modified locally before apply)
 let selectedDeviceKey = null;   // key of the device currently shown in the right panel
+let deviceStatuses    = {};     // maps device key → status string ("online", "error", "offline", "warning")
 
 // ---------- helpers ----------
 function deepCopy(obj) {
@@ -283,14 +290,31 @@ function renderReadsList(device, editIndex) {
       edDefs.forEach(f => {
         const lbl = document.createElement('label');
         lbl.textContent = f.label;
-        const input = document.createElement('input');
-        input.className = 'field-input';
-        input.type  = 'number';
-        input.min   = '0';
-        input.value = f.value;
-        inp[f.key] = input;
-        fieldDiv.appendChild(lbl);
-        fieldDiv.appendChild(input);
+
+        if (f.key === 'fc') {
+          // FC field: dropdown selector
+          const sel = document.createElement('select');
+          sel.className = 'field-input';
+          FC_OPTIONS.forEach(opt => {
+            const option = document.createElement('option');
+            option.value = opt.value;
+            option.textContent = opt.label;
+            option.selected = (f.value === opt.value);
+            sel.appendChild(option);
+          });
+          inp[f.key] = sel;
+          fieldDiv.appendChild(lbl);
+          fieldDiv.appendChild(sel);
+        } else {
+          const input = document.createElement('input');
+          input.className = 'field-input';
+          input.type  = 'number';
+          input.min   = '0';
+          input.value = f.value;
+          inp[f.key] = input;
+          fieldDiv.appendChild(lbl);
+          fieldDiv.appendChild(input);
+        }
       });
 
       const actDiv = document.createElement('div');
@@ -388,7 +412,16 @@ function renderDeviceList() {
   list.innerHTML = '';
   workingConfig.devices.forEach(d => {
     const li = document.createElement('li');
-    li.textContent = d.display_name || d.key;
+
+    // Status dot
+    const dot = document.createElement('span');
+    dot.className = 'device-status-dot device-' + (deviceStatuses[d.key] || 'offline');
+    li.appendChild(dot);
+
+    const nameSpan = document.createElement('span');
+    nameSpan.textContent = d.display_name || d.key;
+    li.appendChild(nameSpan);
+
     li.dataset.key = d.key;
     if (d.key === selectedDeviceKey) li.classList.add('selected');
     li.addEventListener('click', () => selectDevice(d.key));
@@ -421,6 +454,20 @@ function renderAll() {
 }
 
 // ---------- Load ----------
+
+async function loadDeviceStatuses() {
+  try {
+    const res = await fetch('/api/runtime/devices');
+    if (!res.ok) return;
+    const list = await res.json();
+    deviceStatuses = {};
+    if (Array.isArray(list)) {
+      list.forEach(s => { deviceStatuses[s.id] = s.status; });
+    }
+  } catch (e) {
+    // ignore — server may be unavailable
+  }
+}
 
 async function loadView() {
   try {
@@ -547,3 +594,8 @@ document.getElementById('input-import-file').addEventListener('change', async (e
 });
 
 loadView();
+loadDeviceStatuses();
+const _statusPollId = setInterval(async () => {
+  await loadDeviceStatuses();
+  if (workingConfig) renderDeviceList();
+}, 5000);
