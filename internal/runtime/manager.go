@@ -11,6 +11,13 @@ const (
 	StateStopping = "STOPPING"
 )
 
+// DeviceStatus is a snapshot of one replicator unit's current operational status.
+// It is produced by DeviceStatusProvider and consumed by the WebUI layer.
+type DeviceStatus struct {
+	ID     string `json:"id"`
+	Status string `json:"status"` // "online", "error", "offline", "warning"
+}
+
 // ListenerStatus describes the bind result for one Modbus TCP adapter port.
 // It is safe to copy by value.
 type ListenerStatus struct {

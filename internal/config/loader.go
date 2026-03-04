@@ -41,12 +41,18 @@ func LoadBytes(data []byte) (*Config, error) {
 	}
 
 	// Normalise per-target mode to uppercase; apply default "B" if not specified.
+	// Apply default status_unit_id of 100 when not specified.
 	for i := range cfg.Replicator.Units {
 		m := strings.ToUpper(strings.TrimSpace(cfg.Replicator.Units[i].Target.Mode))
 		if m == "" {
 			m = TargetModeB
 		}
 		cfg.Replicator.Units[i].Target.Mode = m
+
+		if cfg.Replicator.Units[i].Target.StatusUnitID == nil {
+			defaultStatusUnitID := uint16(100)
+			cfg.Replicator.Units[i].Target.StatusUnitID = &defaultStatusUnitID
+		}
 	}
 
 	// Apply webui defaults.
