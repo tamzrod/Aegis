@@ -2,11 +2,14 @@
 package webui
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/tamzrod/Aegis/internal/runtime"
 )
 
 // mockManager implements Manager for testing.
@@ -156,5 +159,302 @@ replicator:
 	s := NewServer(":0", mgr)
 	if s == nil {
 		t.Fatal("NewServer returned nil")
+	}
+}
+
+// TestGetConfigView verifies that GET /api/config/view returns a valid JSON view model.
+func TestGetConfigView(t *testing.T) {
+	yaml := []byte(`
+replicator:
+  units:
+    - id: plc1
+      source:
+        endpoint: "192.168.1.100:502"
+        unit_id: 1
+        timeout_ms: 1000
+        device_name: "PLC1"
+      reads:
+        - fc: 3
+          address: 0
+          quantity: 10
+          interval_ms: 1000
+      target:
+        port: 502
+        unit_id: 1
+        status_unit_id: 255
+        status_slot: 0
+        mode: "B"
+`)
+	mgr := &mockManager{yaml: yaml}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/view", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+
+	var view configView
+	if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(view.Devices) != 1 {
+		t.Fatalf("want 1 device, got %d", len(view.Devices))
+	}
+	d := view.Devices[0]
+	if d.Key != "plc1" {
+		t.Errorf("device key: want %q, got %q", "plc1", d.Key)
+	}
+	if d.DisplayName != "PLC1" {
+		t.Errorf("display name: want %q, got %q", "PLC1", d.DisplayName)
+	}
+	if d.Source.Endpoint != "192.168.1.100:502" {
+		t.Errorf("source endpoint: want %q, got %q", "192.168.1.100:502", d.Source.Endpoint)
+	}
+	if len(d.Reads) != 1 {
+		t.Fatalf("want 1 read, got %d", len(d.Reads))
+	}
+	if d.Reads[0].FC != 3 {
+		t.Errorf("read FC: want 3, got %d", d.Reads[0].FC)
+	}
+	if d.Target.Port != 502 {
+		t.Errorf("target port: want 502, got %d", d.Target.Port)
+	}
+	if d.Target.Mode != "B" {
+		t.Errorf("target mode: want %q, got %q", "B", d.Target.Mode)
+	}
+	if view.SelectedKey != "plc1" {
+		t.Errorf("selected_key: want %q, got %q", "plc1", view.SelectedKey)
+	}
+}
+
+// TestGetConfigViewMethodNotAllowed verifies that POST /api/config/view returns 405.
+func TestGetConfigViewMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{yaml: []byte(`replicator: {units: []}`)}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/view", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// validUnitYAML is shared YAML for apply tests.
+const validUnitYAML = `
+replicator:
+  units:
+    - id: plc1
+      source:
+        endpoint: "192.168.1.100:502"
+        unit_id: 1
+        timeout_ms: 1000
+        device_name: "PLC1"
+      reads:
+        - fc: 3
+          address: 0
+          quantity: 10
+          interval_ms: 1000
+      target:
+        port: 502
+        unit_id: 1
+        status_unit_id: 255
+        status_slot: 0
+        mode: "B"
+webui:
+  enabled: true
+  listen: ":8080"
+`
+
+// TestPutConfigApplySuccess verifies that PUT /api/config/apply with a valid
+// configView JSON body returns 200 with {"status":"ok"}.
+func TestPutConfigApplySuccess(t *testing.T) {
+	mgr := &mockManager{yaml: []byte(validUnitYAML)}
+	h := newTestServer(mgr)
+
+	// Build a minimal valid configView JSON body.
+	body := `{
+		"devices": [{
+			"key": "plc1",
+			"display_name": "PLC1",
+			"source": {"endpoint":"192.168.1.100:502","unit_id":1,"timeout_ms":1000,"device_name":"PLC1"},
+			"reads":  [{"fc":3,"address":0,"quantity":10,"interval_ms":1000}],
+			"target": {"port":502,"unit_id":1,"status_unit_id":255,"status_slot":0,"mode":"B"}
+		}],
+		"selected_key": "plc1"
+	}`
+
+	req := httptest.NewRequest(http.MethodPut, "/api/config/apply", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Errorf("want status=ok, got %q", resp["status"])
+	}
+}
+
+// TestPutConfigApplyValidationFailure verifies that PUT /api/config/apply returns
+// 400 with a JSON error body when the manager rejects the config.
+func TestPutConfigApplyValidationFailure(t *testing.T) {
+	mgr := &mockManager{
+		yaml:     []byte(validUnitYAML),
+		applyErr: errors.New("replicator.units[0]: source.timeout_ms must be > 0"),
+	}
+	h := newTestServer(mgr)
+
+	body := `{
+		"devices": [{
+			"key": "plc1",
+			"display_name": "PLC1",
+			"source": {"endpoint":"192.168.1.100:502","unit_id":1,"timeout_ms":0,"device_name":"PLC1"},
+			"reads":  [{"fc":3,"address":0,"quantity":10,"interval_ms":1000}],
+			"target": {"port":502,"unit_id":1,"status_unit_id":255,"status_slot":0,"mode":"B"}
+		}],
+		"selected_key": "plc1"
+	}`
+
+	req := httptest.NewRequest(http.MethodPut, "/api/config/apply", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "error") {
+		t.Errorf("expected JSON error field in body: %q", body)
+	}
+}
+
+// TestPutConfigApplyMethodNotAllowed verifies that GET /api/config/apply returns 405.
+func TestPutConfigApplyMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{yaml: []byte(validUnitYAML)}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/apply", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// mockManagerWithStatus extends mockManager and implements StatusProvider.
+type mockManagerWithStatus struct {
+	mockManager
+	state runtime.RuntimeState
+}
+
+func (m *mockManagerWithStatus) RuntimeStatus() runtime.RuntimeState { return m.state }
+
+// TestRuntimeStatusRunning verifies that GET /api/runtime/status returns running=true.
+func TestRuntimeStatusRunning(t *testing.T) {
+	mgr := &mockManagerWithStatus{state: runtime.RuntimeState{Running: true}}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+
+	var got runtime.RuntimeState
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Running {
+		t.Errorf("want running=true, got false")
+	}
+	if got.Error != "" {
+		t.Errorf("want empty error, got %q", got.Error)
+	}
+}
+
+// TestRuntimeStatusError verifies that GET /api/runtime/status returns running=false with error.
+func TestRuntimeStatusError(t *testing.T) {
+	mgr := &mockManagerWithStatus{
+		state: runtime.RuntimeState{Running: false, Error: "dial timeout"},
+	}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+
+	var got runtime.RuntimeState
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Running {
+		t.Errorf("want running=false, got true")
+	}
+	if got.Error != "dial timeout" {
+		t.Errorf("want error=%q, got %q", "dial timeout", got.Error)
+	}
+}
+
+// TestRuntimeStatusNoProvider verifies that GET /api/runtime/status returns running=false
+// when the manager does not implement StatusProvider.
+func TestRuntimeStatusNoProvider(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+
+	var got runtime.RuntimeState
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Running {
+		t.Errorf("want running=false, got true")
+	}
+}
+
+// TestRuntimeStatusMethodNotAllowed verifies that POST /api/runtime/status returns 405.
+func TestRuntimeStatusMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
 	}
 }

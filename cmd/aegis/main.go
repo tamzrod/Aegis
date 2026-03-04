@@ -1,6 +1,6 @@
+```go
 // cmd/aegis/main.go — IO handling domain
-// Responsibility: config load, memory-store build, Modbus TCP server adapter
-// startup, poll-loop launch, and OS signal handling.
+// Responsibility: config load, engine startup, WebUI server, OS signal handling.
 // All per-unit orchestration is delegated to runOrchestrator (orchestrator.go).
 package main
 
@@ -27,18 +27,12 @@ func main() {
 	cfgPath := os.Args[1]
 
 	// --------------------
-	// Load and validate config (fail fast on invalid config)
+	// Load configuration
 	// --------------------
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		log.Fatalf("config load failed: %v", err)
 	}
-
-	if err := config.Validate(cfg); err != nil {
-		log.Fatalf("config validation failed: %v", err)
-	}
-
-	log.Println("aegis: config loaded and validated")
 
 	// --------------------
 	// Build the shared in-process memory store (derived from replicator config)
@@ -82,6 +76,7 @@ func main() {
 	for port := range seenPorts {
 		listenAddr := fmt.Sprintf(":%d", port)
 		srv := adapter.NewServer(listenAddr, store, authority)
+
 		go func(listen string, s *adapter.Server) {
 			if err := s.ListenAndServe(); err != nil {
 				log.Fatalf("aegis: adapter (%s) failed: %v", listen, err)
@@ -101,8 +96,6 @@ func main() {
 		unitID := p.UnitID()
 
 		// Orchestrator: consume poll results, write data, update per-block health and status.
-		// Scheduling, policy enforcement, state mutation, and data transformation are
-		// handled by runOrchestrator (see orchestrator.go, health.go, snapshot.go).
 		go runOrchestrator(ctx, unitID, p, w, healthStore, out)
 
 		go p.Run(ctx, out)
@@ -118,17 +111,22 @@ func main() {
 		for _, u := range cfg.Replicator.Units {
 			readBlocks += len(u.Reads)
 		}
+
 		configBytes, err := os.ReadFile(cfgPath)
 		if err != nil {
 			log.Printf("aegis: webui: could not read config file for /config endpoint: %v", err)
 		}
+
 		rv := &runtimeView{
 			startTime:      time.Now(),
 			deviceCount:    len(cfg.Replicator.Units),
 			readBlockCount: readBlocks,
 		}
+
 		cv := &configView{data: configBytes}
+
 		go webui.NewServer(cfg.WebUI.Listen, rv, cv).Start(ctx)
+
 		log.Printf("aegis: webui adapter starting on %s", cfg.WebUI.Listen)
 	}
 
@@ -139,8 +137,11 @@ func main() {
 	// --------------------
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
 	<-quit
 
 	log.Println("aegis: shutting down")
+
 	cancel()
 }
+```

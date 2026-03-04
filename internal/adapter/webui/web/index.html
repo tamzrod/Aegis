@@ -3,20 +3,60 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Aegis Config Editor</title>
+  <title>Aegis</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="container">
-    <h1>Aegis Config Editor</h1>
-    <div class="toolbar">
-      <button id="btn-reload">Reload from Disk</button>
-      <button id="btn-apply" class="primary">Apply</button>
-      <button id="btn-restart" class="danger">Restart</button>
+
+  <div id="pending-banner" class="pending-banner hidden">
+    <span class="pending-banner__msg">⚠ Pending configuration changes</span>
+    <div class="pending-banner__actions">
+      <button id="btn-apply-config" class="btn-primary">Apply Config</button>
+      <button id="btn-discard" class="btn-action">Discard Changes</button>
     </div>
-    <textarea id="editor" spellcheck="false"></textarea>
-    <div id="status" class="status"></div>
   </div>
+
+  <div class="layout">
+
+    <div class="left-panel">
+      <div class="panel-title">Devices</div>
+      <ul id="device-list" class="device-list"></ul>
+      <div class="panel-actions">
+        <button id="btn-add" class="btn-action">+ Add</button>
+        <button id="btn-delete" class="btn-action">Delete</button>
+      </div>
+    </div>
+
+    <div class="right-panel">
+
+      <section class="section">
+        <div class="section-header">
+          <span class="section-label">Source</span>
+          <div id="src-actions" class="section-actions"></div>
+        </div>
+        <div id="source-content" class="section-body"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <span class="section-label">Reads</span>
+          <div id="reads-actions" class="section-actions"></div>
+        </div>
+        <div id="reads-content" class="section-body"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-header">
+          <span class="section-label">Target</span>
+          <div id="tgt-actions" class="section-actions"></div>
+        </div>
+        <div id="target-content" class="section-body"></div>
+      </section>
+
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
   <script src="app.js"></script>
 </body>
 </html>

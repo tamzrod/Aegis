@@ -1,8 +1,7 @@
 // cmd/aegis/runtime.go
 // Runtime holds the currently running Aegis configuration and all active
-// components derived from it.  BuildRuntime constructs a new Runtime from
-// a validated Config and raw YAML bytes; it also starts all Modbus adapters
-// and engine poll loops.
+// components derived from it.  NewRuntime creates a hollow Runtime (no engine
+// running); StartEngine populates it from a validated Config and raw YAML bytes.
 package main
 
 import (
@@ -17,6 +16,7 @@ import (
 	"github.com/tamzrod/Aegis/internal/adapter"
 	"github.com/tamzrod/Aegis/internal/config"
 	"github.com/tamzrod/Aegis/internal/engine"
+	runtimepkg "github.com/tamzrod/Aegis/internal/runtime"
 )
 
 // Runtime holds the active configuration and all running components.
@@ -27,56 +27,27 @@ type Runtime struct {
 	configPath       string
 	cancel           context.CancelFunc
 	servers          []*adapter.Server
+	rtm              runtimepkg.RuntimeManager
 }
 
-// BuildRuntime constructs a new Runtime from a validated Config, its raw YAML bytes,
-// and the path of the config file on disk.  It starts all Modbus TCP adapters and
-// engine poll loops.  Callers must call Validate(cfg) before BuildRuntime.
-func BuildRuntime(cfg *config.Config, cfgYAML []byte, cfgPath string) (*Runtime, error) {
-	store, err := config.BuildMemStore(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("memory store build: %w", err)
-	}
+// NewRuntime creates a hollow Runtime that tracks cfgPath and runtime state
+// but has no engine running yet.  Call StartEngine after config validation.
+func NewRuntime(cfgPath string) *Runtime {
+	return &Runtime{configPath: cfgPath}
+}
 
-	units, err := engine.Build(cfg, store)
-	if err != nil {
-		return nil, fmt.Errorf("engine build: %w", err)
-	}
+// SetError marks the runtime as not running and records a startup error.
+// It is called by main when config validation or engine startup fails.
+func (r *Runtime) SetError(err error) {
+	r.rtm.SetError(err)
+}
 
-	healthStore := engine.NewBlockHealthStore()
-	ctx, cancel := context.WithCancel(context.Background())
-
-	authority := adapter.BuildAuthorityRegistry(cfg, healthStore)
-
-	seenPorts := make(map[uint16]struct{})
-	for _, u := range cfg.Replicator.Units {
-		seenPorts[u.Target.Port] = struct{}{}
-	}
-
-	var servers []*adapter.Server
-	for port := range seenPorts {
-		listenAddr := fmt.Sprintf(":%d", port)
-		srv := adapter.NewServer(listenAddr, store, authority)
-		servers = append(servers, srv)
-		go func(listen string, s *adapter.Server) {
-			if err := s.ListenAndServe(); err != nil && !errors.Is(err, net.ErrClosed) {
-				log.Printf("aegis: adapter (%s) failed: %v", listen, err)
-			}
-		}(listenAddr, srv)
-	}
-
-	for _, u := range units {
-		out := make(chan engine.PollResult, 8)
-		go runOrchestrator(ctx, u.Poller.UnitID(), u.Poller, u.Writer, healthStore, out)
-		go u.Poller.Run(ctx, out)
-	}
-
-	return &Runtime{
-		activeConfigYAML: cfgYAML,
-		configPath:       cfgPath,
-		cancel:           cancel,
-		servers:          servers,
-	}, nil
+// StartEngine builds and starts the engine from a validated Config.
+// The caller must have previously called config.Validate(cfg).
+func (r *Runtime) StartEngine(cfg *config.Config, yamlBytes []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rebuildLocked(cfg, yamlBytes)
 }
 
 // Stop cancels the running engine context and shuts down all Modbus listeners.
@@ -90,6 +61,12 @@ func (r *Runtime) Stop() {
 	for _, srv := range r.servers {
 		srv.Shutdown()
 	}
+}
+
+// RuntimeStatus implements webui.StatusProvider.
+// It returns a thread-safe copy of the current runtime state.
+func (r *Runtime) RuntimeStatus() runtimepkg.RuntimeState {
+	return r.rtm.Status()
 }
 
 // GetActiveConfigYAML implements webui.Manager.
@@ -201,5 +178,6 @@ func (r *Runtime) rebuildLocked(cfg *config.Config, yamlBytes []byte) error {
 	r.cancel = cancel
 	r.servers = newServers
 	r.activeConfigYAML = yamlBytes
+	r.rtm.SetRunning()
 	return nil
 }
