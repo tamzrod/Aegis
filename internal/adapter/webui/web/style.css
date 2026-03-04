@@ -9,28 +9,27 @@ body {
   flex-direction: column;
 }
 
-/* ---- Pending-changes banner ---- */
-.pending-banner {
+/* ---- Global header ---- */
+.global-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
   padding: 0.55rem 1rem;
-  background: #2a2000;
-  border-bottom: 1px solid #665500;
+  background: #0d0d1a;
+  border-bottom: 1px solid #333;
   flex-shrink: 0;
 }
 
-.pending-banner.hidden {
-  display: none;
+.global-header__title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #a0c4ff;
 }
 
-.pending-banner__msg {
-  font-size: 0.88rem;
-  color: #ffd966;
-}
-
-.pending-banner__actions {
+.global-header__actions {
   display: flex;
   gap: 0.5rem;
 }
