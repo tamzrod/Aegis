@@ -423,6 +423,13 @@ select.field-input {
   display: none;
 }
 
+/* ---- Login logo ---- */
+.login-logo {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1.25rem;
+}
+
 /* ---- Login page ---- */
 .login-wrap {
   display: flex;
