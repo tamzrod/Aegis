@@ -1,66 +1,82 @@
 'use strict';
 
-const editor = document.getElementById('editor');
-const status = document.getElementById('status');
+let currentView = null;
 
-function setStatus(msg, isError) {
-  status.textContent = msg;
-  status.className = 'status ' + (isError ? 'error' : 'ok');
+function showToast(msg) {
+  const toast = document.getElementById('toast');
+  toast.textContent = msg;
+  toast.classList.remove('hidden');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => toast.classList.add('hidden'), 2500);
 }
 
-async function loadConfig() {
+function renderDevice(device) {
+  const src = device.source;
+  document.getElementById('src-endpoint').textContent    = src.endpoint    || '—';
+  document.getElementById('src-unit-id').textContent     = src.unit_id     ?? '—';
+  document.getElementById('src-timeout').textContent     = src.timeout_ms  ?? '—';
+  document.getElementById('src-device-name').textContent = src.device_name || '—';
+
+  const readsList = document.getElementById('reads-list');
+  readsList.innerHTML = '';
+  (device.reads || []).forEach(r => {
+    const li = document.createElement('li');
+    li.textContent = `FC${r.fc} | Address: ${r.address} | Quantity: ${r.quantity} | Interval: ${r.interval_ms} ms`;
+    readsList.appendChild(li);
+  });
+
+  const tgt = device.target;
+  document.getElementById('tgt-port').textContent           = tgt.port            ?? '—';
+  document.getElementById('tgt-unit-id').textContent        = tgt.unit_id         ?? '—';
+  document.getElementById('tgt-status-unit-id').textContent = tgt.status_unit_id  ?? '—';
+  document.getElementById('tgt-status-slot').textContent    = tgt.status_slot     ?? '—';
+  document.getElementById('tgt-mode').textContent           = tgt.mode            || '—';
+}
+
+function selectDevice(key) {
+  if (!currentView) return;
+  const device = currentView.devices.find(d => d.key === key);
+  if (!device) return;
+
+  document.querySelectorAll('#device-list li').forEach(li => {
+    li.classList.toggle('selected', li.dataset.key === key);
+  });
+
+  renderDevice(device);
+}
+
+function renderDeviceList(view) {
+  const list = document.getElementById('device-list');
+  list.innerHTML = '';
+  view.devices.forEach(d => {
+    const li = document.createElement('li');
+    li.textContent = d.display_name || d.key;
+    li.dataset.key = d.key;
+    li.addEventListener('click', () => selectDevice(d.key));
+    list.appendChild(li);
+  });
+}
+
+async function loadView() {
   try {
-    const res = await fetch('/api/config/raw');
+    const res = await fetch('/api/config/view');
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    editor.value = await res.text();
-    setStatus('Config loaded.');
+    currentView = await res.json();
+    renderDeviceList(currentView);
+    if (currentView.selected_key) {
+      selectDevice(currentView.selected_key);
+    }
   } catch (e) {
-    setStatus('Load failed: ' + e.message, true);
+    showToast('Load failed: ' + e.message);
   }
 }
 
-document.getElementById('btn-apply').addEventListener('click', async () => {
-  setStatus('Applying...');
-  try {
-    const res = await fetch('/api/config/raw', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'text/yaml' },
-      body: editor.value,
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'HTTP ' + res.status }));
-      throw new Error(body.error || 'HTTP ' + res.status);
-    }
-    setStatus('Applied successfully.');
-  } catch (e) {
-    setStatus('Apply failed: ' + e.message, true);
-  }
-});
+function disabledClick() {
+  showToast('Editing available in next phase');
+}
 
-document.getElementById('btn-reload').addEventListener('click', async () => {
-  setStatus('Reloading...');
-  try {
-    const res = await fetch('/api/reload', { method: 'POST' });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'HTTP ' + res.status }));
-      throw new Error(body.error || 'HTTP ' + res.status);
-    }
-    await loadConfig();
-    setStatus('Reloaded from disk.');
-  } catch (e) {
-    setStatus('Reload failed: ' + e.message, true);
-  }
-});
+document.getElementById('btn-add').addEventListener('click', disabledClick);
+document.getElementById('btn-delete').addEventListener('click', disabledClick);
+document.getElementById('btn-add-read').addEventListener('click', disabledClick);
 
-document.getElementById('btn-restart').addEventListener('click', async () => {
-  if (!confirm('Restart Aegis? The supervisor will restart the process.')) return;
-  setStatus('Restarting...');
-  try {
-    await fetch('/api/restart', { method: 'POST' });
-    setStatus('Restart signal sent.');
-  } catch (e) {
-    setStatus('Restart failed: ' + e.message, true);
-  }
-});
-
-loadConfig();
+loadView();

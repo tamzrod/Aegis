@@ -3,20 +3,60 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Aegis Config Editor</title>
+  <title>Aegis</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="container">
-    <h1>Aegis Config Editor</h1>
-    <div class="toolbar">
-      <button id="btn-reload">Reload from Disk</button>
-      <button id="btn-apply" class="primary">Apply</button>
-      <button id="btn-restart" class="danger">Restart</button>
+  <div class="layout">
+
+    <div class="left-panel">
+      <div class="panel-title">Devices</div>
+      <ul id="device-list" class="device-list"></ul>
+      <div class="panel-actions">
+        <button id="btn-add" class="btn-action" disabled>+ Add</button>
+        <button id="btn-delete" class="btn-action" disabled>Delete</button>
+      </div>
     </div>
-    <textarea id="editor" spellcheck="false"></textarea>
-    <div id="status" class="status"></div>
+
+    <div class="right-panel">
+
+      <section class="section">
+        <div class="section-title">Source</div>
+        <div id="source-content" class="section-body">
+          <table class="field-table">
+            <tr><th>Endpoint</th><td id="src-endpoint">—</td></tr>
+            <tr><th>Unit ID</th><td id="src-unit-id">—</td></tr>
+            <tr><th>Timeout (ms)</th><td id="src-timeout">—</td></tr>
+            <tr><th>Device Name</th><td id="src-device-name">—</td></tr>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">Reads</div>
+        <div id="reads-content" class="section-body">
+          <ul id="reads-list" class="reads-list"></ul>
+          <button id="btn-add-read" class="btn-action" disabled>+ Add Read</button>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-title">Target</div>
+        <div id="target-content" class="section-body">
+          <table class="field-table">
+            <tr><th>Port</th><td id="tgt-port">—</td></tr>
+            <tr><th>Unit ID</th><td id="tgt-unit-id">—</td></tr>
+            <tr><th>Status Unit ID</th><td id="tgt-status-unit-id">—</td></tr>
+            <tr><th>Status Slot</th><td id="tgt-status-slot">—</td></tr>
+            <tr><th>Mode</th><td id="tgt-mode">—</td></tr>
+          </table>
+        </div>
+      </section>
+
+    </div>
   </div>
+
+  <div id="toast" class="toast hidden"></div>
   <script src="app.js"></script>
 </body>
 </html>
