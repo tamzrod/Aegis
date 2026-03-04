@@ -39,11 +39,13 @@ func NewServer(listen string, store core.Store, authority Enforcer, debug bool) 
 // NewServerWithListener creates a Server with a pre-bound net.Listener.
 // Using a pre-bound listener ensures Shutdown can always close it immediately,
 // eliminating the race between goroutine scheduling and Shutdown seeing a nil ln.
-func NewServerWithListener(listen string, ln net.Listener, store core.Store, authority Enforcer) *Server {
+// When debug is true, verbose per-request routing logs are emitted.
+func NewServerWithListener(listen string, ln net.Listener, store core.Store, authority Enforcer, debug bool) *Server {
 	return &Server{
 		listen:    listen,
 		store:     store,
 		authority: authority,
+		debug:     debug,
 		ln:        ln,
 		done:      make(chan struct{}),
 	}
@@ -119,6 +121,6 @@ func (s *Server) Serve() error {
 		if err != nil {
 			return err
 		}
-		go HandleConn(conn, s.store, s.authority)
+		go HandleConn(conn, s.store, s.authority, s.debug)
 	}
 }
