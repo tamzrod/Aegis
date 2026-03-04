@@ -35,8 +35,13 @@ func main() {
 	// Load and validate configuration
 	// --------------------
 	if _, statErr := os.Stat(cfgPath); errors.Is(statErr, os.ErrNotExist) {
-		// Config file not found — start WebUI only, runtime remains disabled.
-		log.Println("aegis: no config file found, starting WebUI only")
+		// Config file not found — create a minimal config and start WebUI only.
+		log.Println("aegis: config.yaml not found, creating new configuration")
+		minYAML := []byte(config.MinimalConfigYAML)
+		if writeErr := config.CreateMinimal(cfgPath); writeErr != nil {
+			log.Printf("aegis: create config file: %v", writeErr)
+		}
+		rt.activeConfigYAML = minYAML
 		startWebUI = true
 	} else {
 		cfg, err := config.Load(cfgPath)

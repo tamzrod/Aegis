@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/tamzrod/Aegis/internal/adapter"
@@ -107,8 +108,30 @@ func (r *RuntimeManager) ApplyConfig(yamlBytes []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if err := os.WriteFile(r.configPath, yamlBytes, 0600); err != nil {
-		return fmt.Errorf("write config file: %w", err)
+	// Atomic write: write to a uniquely-named temp file in the same directory
+	// as the config (ensures same filesystem for atomic rename), then rename.
+	dir := filepath.Dir(r.configPath)
+	tmpFile, err := os.CreateTemp(dir, "config.*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp config file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	if _, werr := tmpFile.Write(yamlBytes); werr != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("write temp config file: %w", werr)
+	}
+	if cerr := tmpFile.Close(); cerr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("close temp config file: %w", cerr)
+	}
+	if cherr := os.Chmod(tmpPath, 0600); cherr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("chmod temp config file: %w", cherr)
+	}
+	if rerr := os.Rename(tmpPath, r.configPath); rerr != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("rename config file: %w", rerr)
 	}
 
 	return r.rebuild(cfg, yamlBytes)
