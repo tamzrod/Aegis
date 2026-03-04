@@ -42,11 +42,25 @@ const adminHashForTest = "$2a$04$2Nnq62aDGVdv7IthZa8kUOYL.YoLVbmIiRvfoJg9lWjp0i4
 
 func newTestServer(mgr Manager) http.Handler {
 	s := NewServer(":0", mgr, config.AuthConfig{Username: "admin", PasswordHash: adminHashForTest})
-	// Wrap: automatically inject admin credentials on every request so that handler
-	// tests focus on handler logic rather than auth mechanics.
+
+	// Perform a real login to obtain a session cookie so handler tests
+	// focus on handler logic rather than auth mechanics.
+	loginBody := `{"username":"admin","password":"admin"}`
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(loginBody))
+	loginRec := httptest.NewRecorder()
+	s.srv.Handler.ServeHTTP(loginRec, loginReq)
+
+	var sessionCookie string
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			sessionCookie = c.Value
+			break
+		}
+	}
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r2 := r.Clone(r.Context())
-		r2.SetBasicAuth("admin", "admin")
+		r2.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
 		s.srv.Handler.ServeHTTP(w, r2)
 	})
 }
@@ -865,7 +879,7 @@ func TestRuntimeDevicesMethodNotAllowed(t *testing.T) {
 	}
 }
 
-// newTestServerWithAuth creates a test server with Basic Auth enabled.
+// newTestServerWithAuth creates a test server (without pre-injected session).
 func newTestServerWithAuth(mgr Manager, username, passwordHash string) http.Handler {
 	s := NewServer(":0", mgr, config.AuthConfig{Username: username, PasswordHash: passwordHash})
 	return s.srv.Handler
@@ -874,8 +888,9 @@ func newTestServerWithAuth(mgr Manager, username, passwordHash string) http.Hand
 // bcryptHashOf is the bcrypt hash of "testpassword" at MinCost, used in auth tests.
 const bcryptHashOf_testpassword = "$2a$04$EfZKhUjPhcA6J4aFq0R7a.Onh4.XG5W1X4S0IgbgfYO2mNhlWqSFi"
 
-// TestBasicAuthMissingCredentials verifies that a request without credentials returns 401.
-func TestBasicAuthMissingCredentials(t *testing.T) {
+// TestFormAuthNoSessionRedirects verifies that a request without a session cookie
+// to a protected route is redirected to /login.
+func TestFormAuthNoSessionRedirects(t *testing.T) {
 	mgr := &mockManager{yaml: []byte("replicator: {}")}
 	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
 
@@ -883,36 +898,21 @@ func TestBasicAuthMissingCredentials(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("want 401, got %d", rec.Code)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("want 302, got %d", rec.Code)
 	}
-	if auth := rec.Header().Get("WWW-Authenticate"); !strings.Contains(auth, "Basic") {
-		t.Errorf("want WWW-Authenticate: Basic ..., got %q", auth)
-	}
-}
-
-// TestBasicAuthWrongPassword verifies that incorrect password returns 401.
-func TestBasicAuthWrongPassword(t *testing.T) {
-	mgr := &mockManager{yaml: []byte("replicator: {}")}
-	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
-	req.SetBasicAuth("admin", "wrongpassword")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("want 401, got %d", rec.Code)
+	if loc := rec.Header().Get("Location"); loc != "/login" {
+		t.Errorf("want Location: /login, got %q", loc)
 	}
 }
 
-// TestBasicAuthWrongUsername verifies that incorrect username returns 401.
-func TestBasicAuthWrongUsername(t *testing.T) {
+// TestFormAuthLoginWrongPassword verifies that POST /api/login with bad credentials returns 401.
+func TestFormAuthLoginWrongPassword(t *testing.T) {
 	mgr := &mockManager{yaml: []byte("replicator: {}")}
 	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
-	req.SetBasicAuth("wronguser", "testpassword")
+	body := `{"username":"admin","password":"wrongpassword"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -921,13 +921,74 @@ func TestBasicAuthWrongUsername(t *testing.T) {
 	}
 }
 
-// TestBasicAuthValidCredentials verifies that correct credentials grant access.
-func TestBasicAuthValidCredentials(t *testing.T) {
+// TestFormAuthLoginWrongUsername verifies that POST /api/login with wrong username returns 401.
+func TestFormAuthLoginWrongUsername(t *testing.T) {
 	mgr := &mockManager{yaml: []byte("replicator: {}")}
 	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
 
+	body := `{"username":"wronguser","password":"testpassword"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
+	}
+}
+
+// TestFormAuthLoginSuccess verifies that POST /api/login with valid credentials returns 200
+// and sets a session cookie.
+func TestFormAuthLoginSuccess(t *testing.T) {
+	mgr := &mockManager{yaml: []byte("replicator: {}")}
+	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
+
+	body := `{"username":"admin","password":"testpassword"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+
+	var found bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			found = true
+			if c.Value == "" {
+				t.Error("session cookie value must not be empty")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("want %q cookie in response, got none", sessionCookieName)
+	}
+}
+
+// TestFormAuthSessionGrantsAccess verifies that a valid session cookie grants access to a
+// protected route.
+func TestFormAuthSessionGrantsAccess(t *testing.T) {
+	mgr := &mockManager{yaml: []byte("replicator: {}")}
+	h := newTestServerWithAuth(mgr, "admin", bcryptHashOf_testpassword)
+
+	// Login to get a session cookie.
+	loginBody := `{"username":"admin","password":"testpassword"}`
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(loginBody))
+	loginRec := httptest.NewRecorder()
+	h.ServeHTTP(loginRec, loginReq)
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("login failed: %d", loginRec.Code)
+	}
+	var sessionCookie string
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			sessionCookie = c.Value
+		}
+	}
+
+	// Use the session cookie to access a protected endpoint.
 	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
-	req.SetBasicAuth("admin", "testpassword")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
@@ -936,19 +997,17 @@ func TestBasicAuthValidCredentials(t *testing.T) {
 	}
 }
 
-// TestBasicAuthEmptyConfigRejectsAll verifies that even when AuthConfig has empty fields,
-// requests without credentials are still rejected (auth is always enforced).
-func TestBasicAuthEmptyConfigRejectsAll(t *testing.T) {
+// TestFormAuthEmptyConfigRedirects verifies that empty AuthConfig still redirects
+// unauthenticated requests (auth is always enforced).
+func TestFormAuthEmptyConfigRedirects(t *testing.T) {
 	mgr := &mockManager{yaml: []byte("replicator: {}")}
-
-	// Empty AuthConfig: no valid bcrypt hash → every request must be rejected.
 	h := newTestServerWithAuth(mgr, "", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("want 401 (auth always enforced), got %d", rec.Code)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("want 302 (always redirect), got %d", rec.Code)
 	}
 }

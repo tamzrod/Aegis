@@ -8,17 +8,23 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/tamzrod/Aegis/internal/config"
 	"github.com/tamzrod/Aegis/internal/runtime"
 )
 
 // maxConfigBodyBytes is the maximum accepted request body size for config endpoints.
 const maxConfigBodyBytes = 1 << 20 // 1 MiB
 
+// maxLoginBodyBytes is the maximum accepted request body size for the login endpoint.
+const maxLoginBodyBytes = 1 << 16 // 64 KiB
+
 type handlers struct {
-	mgr Manager
-	sp  StatusProvider
-	lp  ListenerProvider
-	dp  DeviceStatusProvider
+	mgr      Manager
+	sp       StatusProvider
+	lp       ListenerProvider
+	dp       DeviceStatusProvider
+	sessions *sessionStore
+	auth     config.AuthConfig
 }
 
 // handleConfigRaw serves GET /api/config/raw and PUT /api/config/raw.
@@ -233,4 +239,80 @@ func (h *handlers) handleRuntimeListeners(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(statuses)
+}
+
+// loginRequest is the JSON body accepted by POST /api/login.
+type loginRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// handleLogin serves POST /api/login.
+// It validates the supplied credentials and, on success, sets a session cookie
+// and returns 200 {"status":"ok"}. On failure it returns 401 {"error":"..."}.
+func (h *handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxLoginBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+
+	var req loginRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	if !checkCredentials(h.auth, req.Username, req.Password) {
+		writeError(w, http.StatusUnauthorized, "invalid credentials")
+		return
+	}
+
+	token, err := h.sessions.create()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "session error")
+		return
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   int(sessionTTL / time.Second),
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// handleLogout serves POST /api/logout.
+// It invalidates the current session cookie and redirects to /login.
+func (h *handlers) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		h.sessions.delete(cookie.Value)
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
+
+	http.Redirect(w, r, "/login", http.StatusFound)
 }

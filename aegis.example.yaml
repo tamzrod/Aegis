@@ -57,7 +57,7 @@ replicator:
 # debug:
 #   adapter_routing: false   # Set to true to enable verbose per-request routing logs.
 
-# WebUI authentication credentials (HTTP Basic Auth — always enforced).
+# WebUI authentication credentials (form-based login — always enforced).
 # Default when this section is absent: username=admin, password=admin.
 # password_hash must be a bcrypt hash (e.g. generated with: htpasswd -nbB admin mypassword).
 # auth:

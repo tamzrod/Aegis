@@ -63,12 +63,14 @@ type Server struct {
 // NewServer creates a WebUI Server that listens on listen and uses mgr for runtime operations.
 // If mgr also implements StatusProvider, the /api/runtime/status endpoint becomes active.
 // If mgr also implements ListenerProvider, the /api/runtime/listeners endpoint becomes active.
-// auth configures optional HTTP Basic Authentication; both username and password_hash must be
+// auth configures form-based session authentication; both username and password_hash must be
 // non-empty for authentication to be enforced.
 func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
+	store := newSessionStore()
+
 	mux := http.NewServeMux()
 
-	h := &handlers{mgr: mgr}
+	h := &handlers{mgr: mgr, sessions: store, auth: auth}
 	if sp, ok := mgr.(StatusProvider); ok {
 		h.sp = sp
 	}
@@ -78,25 +80,36 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	if dp, ok := mgr.(DeviceStatusProvider); ok {
 		h.dp = dp
 	}
-	mux.HandleFunc("/api/config/view", h.handleConfigView)
-	mux.HandleFunc("/api/config/apply", h.handleConfigApply)
-	mux.HandleFunc("/api/config/raw", h.handleConfigRaw)
-	mux.HandleFunc("/api/config/export", h.handleConfigExport)
-	mux.HandleFunc("/api/config/import", h.handleConfigImport)
-	mux.HandleFunc("/api/reload", h.handleReload)
-	mux.HandleFunc("/api/restart", h.handleRestart)
-	mux.HandleFunc("/api/runtime/status", h.handleRuntimeStatus)
-	mux.HandleFunc("/api/runtime/start", h.handleRuntimeStart)
-	mux.HandleFunc("/api/runtime/stop", h.handleRuntimeStop)
-	mux.HandleFunc("/api/runtime/listeners", h.handleRuntimeListeners)
-	mux.HandleFunc("/api/runtime/devices", h.handleRuntimeDevices)
 
+	// Unprotected routes: login page and login API endpoint.
 	webFS, _ := fs.Sub(webFiles, "web")
-	mux.Handle("/", http.FileServer(http.FS(webFS)))
+	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "login.html")
+	})
+	mux.HandleFunc("/api/login", h.handleLogin)
+
+	// Protected API routes — all require a valid session cookie.
+	protected := http.NewServeMux()
+	protected.HandleFunc("/api/config/view", h.handleConfigView)
+	protected.HandleFunc("/api/config/apply", h.handleConfigApply)
+	protected.HandleFunc("/api/config/raw", h.handleConfigRaw)
+	protected.HandleFunc("/api/config/export", h.handleConfigExport)
+	protected.HandleFunc("/api/config/import", h.handleConfigImport)
+	protected.HandleFunc("/api/reload", h.handleReload)
+	protected.HandleFunc("/api/restart", h.handleRestart)
+	protected.HandleFunc("/api/runtime/status", h.handleRuntimeStatus)
+	protected.HandleFunc("/api/runtime/start", h.handleRuntimeStart)
+	protected.HandleFunc("/api/runtime/stop", h.handleRuntimeStop)
+	protected.HandleFunc("/api/runtime/listeners", h.handleRuntimeListeners)
+	protected.HandleFunc("/api/runtime/devices", h.handleRuntimeDevices)
+	protected.HandleFunc("/api/logout", h.handleLogout)
+	protected.Handle("/", http.FileServer(http.FS(webFS)))
+
+	mux.Handle("/", requireSession(store, protected))
 
 	return &Server{
 		listen: listen,
-		srv:    &http.Server{Addr: listen, Handler: basicAuth(auth, mux)},
+		srv:    &http.Server{Addr: listen, Handler: mux},
 	}
 }
 
