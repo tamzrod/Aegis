@@ -318,6 +318,11 @@ select.field-input {
   background: #3d3d6e;
 }
 
+.btn-sm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .btn-sm.btn-save {
   border-color: #2a8bc0;
   background: #1a4a6a;
@@ -387,6 +392,14 @@ select.field-input {
   font-size: 0.75rem;
   color: #888;
   margin-left: 0.4rem;
+}
+
+/* ---- Field validation error ---- */
+.field-error {
+  display: block;
+  color: #ff6b6b;
+  font-size: 0.75rem;
+  margin-top: 0.2rem;
 }
 
 /* ---- Toast ---- */
