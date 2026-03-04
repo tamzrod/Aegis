@@ -6,7 +6,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/tamzrod/Aegis/internal/config"
 	"github.com/tamzrod/Aegis/internal/runtime"
@@ -23,7 +26,9 @@ type handlers struct {
 	sp       StatusProvider
 	lp       ListenerProvider
 	dp       DeviceStatusProvider
+	pu       PasswordUpdater
 	sessions *sessionStore
+	authMu   sync.RWMutex
 	auth     config.AuthConfig
 }
 
@@ -273,7 +278,11 @@ func (h *handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.sessions.create()
+	h.authMu.RLock()
+	requireChange := h.auth.DefaultPassword
+	h.authMu.RUnlock()
+
+	token, err := h.sessions.create(requireChange)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "session error")
 		return
@@ -287,6 +296,78 @@ func (h *handlers) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(sessionTTL / time.Second),
 	})
+
+	resp := map[string]interface{}{"status": "ok"}
+	if requireChange {
+		resp["password_change_required"] = true
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// changePasswordRequest is the JSON body accepted by POST /api/change-password.
+type changePasswordRequest struct {
+	NewPassword     string `json:"new_password"`
+	ConfirmPassword string `json:"confirm_password"`
+}
+
+// handleChangePassword serves POST /api/change-password.
+// It validates the new password, hashes it, writes it to config, and clears
+// the password-change-required flag on the current session.
+func (h *handlers) handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxLoginBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "read body: "+err.Error())
+		return
+	}
+
+	var req changePasswordRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	if req.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "new password is required")
+		return
+	}
+	if req.NewPassword != req.ConfirmPassword {
+		writeError(w, http.StatusBadRequest, "passwords do not match")
+		return
+	}
+
+	if h.pu == nil {
+		writeError(w, http.StatusInternalServerError, "password update not supported")
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "hash error")
+		return
+	}
+
+	if err := h.pu.UpdatePasswordHash(string(hash)); err != nil {
+		writeError(w, http.StatusInternalServerError, "update failed: "+err.Error())
+		return
+	}
+
+	// Clear the password-change-required flag on the current session.
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		h.sessions.clearPasswordChangeRequired(cookie.Value)
+	}
+
+	// Update the in-memory auth config so future logins use the new hash.
+	h.authMu.Lock()
+	h.auth.PasswordHash = string(hash)
+	h.auth.DefaultPassword = false
+	h.authMu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

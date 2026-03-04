@@ -44,9 +44,13 @@ type Config struct {
 // Authentication is always enforced. Default values (username=admin, password=admin)
 // are applied by LoadBytes when the section is absent.
 // PasswordHash must be a bcrypt hash of the password.
+// DefaultPassword is set to true by LoadBytes when no password_hash is present in
+// the config file, indicating the system is using the built-in default credentials.
+// It is never written to YAML.
 type AuthConfig struct {
-	Username     string `yaml:"username"`
-	PasswordHash string `yaml:"password_hash"`
+	Username        string `yaml:"username"`
+	PasswordHash    string `yaml:"password_hash"`
+	DefaultPassword bool   `yaml:"-"`
 }
 
 // DebugConfig contains optional developer/diagnostic flags.

@@ -54,6 +54,13 @@ type DeviceStatusProvider interface {
 	DeviceStatuses() []runtime.DeviceStatus
 }
 
+// PasswordUpdater is an optional extension for updating the stored password hash.
+// If the concrete Manager also implements PasswordUpdater, the /api/change-password
+// endpoint becomes active.
+type PasswordUpdater interface {
+	UpdatePasswordHash(hash string) error
+}
+
 // Server is the embedded WebUI HTTP server.
 type Server struct {
 	listen string
@@ -80,6 +87,9 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	if dp, ok := mgr.(DeviceStatusProvider); ok {
 		h.dp = dp
 	}
+	if pu, ok := mgr.(PasswordUpdater); ok {
+		h.pu = pu
+	}
 
 	// Unprotected routes: login page, login API endpoint, and shared static assets.
 	// Static assets must be public so the login page can load its CSS/JS.
@@ -97,6 +107,10 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 
 	// Protected API routes — all require a valid session cookie.
 	protected := http.NewServeMux()
+	protected.HandleFunc("/change-password", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "change-password.html")
+	})
+	protected.HandleFunc("/api/change-password", h.handleChangePassword)
 	protected.HandleFunc("/api/config/view", h.handleConfigView)
 	protected.HandleFunc("/api/config/apply", h.handleConfigApply)
 	protected.HandleFunc("/api/config/raw", h.handleConfigRaw)

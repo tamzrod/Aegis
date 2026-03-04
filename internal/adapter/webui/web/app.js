@@ -675,3 +675,14 @@ const _statusPollId = setInterval(async () => {
   await loadDeviceStatuses();
   if (workingConfig) renderDeviceList();
 }, 5000);
+
+// ---------- Logout ----------
+
+document.getElementById('btn-logout').addEventListener('click', async () => {
+  try {
+    await fetch('/api/logout', { method: 'POST' });
+  } catch {
+    // ignore network errors — redirect regardless
+  }
+  window.location.href = '/login';
+});

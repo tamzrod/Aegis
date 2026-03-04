@@ -41,7 +41,12 @@
                     body: JSON.stringify({username, password})
                 });
                 if (resp.ok) {
-                    window.location.href = '/';
+                    const body = await resp.json().catch(() => ({}));
+                    if (body.password_change_required) {
+                        window.location.href = '/change-password';
+                    } else {
+                        window.location.href = '/';
+                    }
                 } else {
                     errEl.style.display = 'block';
                 }

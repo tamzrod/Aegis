@@ -190,7 +190,7 @@ webui:
 }
 
 // TestLoadBytesAuthDefaults verifies that when the auth section is absent, LoadBytes
-// defaults to username=admin and a bcrypt hash of "admin".
+// defaults to username=admin and a bcrypt hash of "admin", and sets DefaultPassword=true.
 func TestLoadBytesAuthDefaults(t *testing.T) {
 	configYAML := []byte(`
 replicator:
@@ -220,6 +220,9 @@ replicator:
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(cfg.Auth.PasswordHash), []byte("admin")); err != nil {
 		t.Errorf("Auth.PasswordHash: default hash does not match password %q: %v", "admin", err)
+	}
+	if !cfg.Auth.DefaultPassword {
+		t.Error("Auth.DefaultPassword: want true when password_hash is absent, got false")
 	}
 }
 
@@ -254,6 +257,9 @@ auth:
 	}
 	if cfg.Auth.PasswordHash != "$2a$04$somehashvalue" {
 		t.Errorf("Auth.PasswordHash: want %q, got %q", "$2a$04$somehashvalue", cfg.Auth.PasswordHash)
+	}
+	if cfg.Auth.DefaultPassword {
+		t.Error("Auth.DefaultPassword: want false when password_hash is present, got true")
 	}
 }
 
