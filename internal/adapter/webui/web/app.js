@@ -32,6 +32,36 @@ function getSelectedDeviceIndex() {
   return workingConfig.devices.findIndex(d => d.key === selectedDeviceKey);
 }
 
+// nextAvailableSlot finds the lowest status slot not used by any other device
+// sharing the same status_unit_id. The device identified by excludeKey is excluded
+// from the check so that re-opening its own edit form does not produce a collision.
+function nextAvailableSlot(devices, statusUnitId, excludeKey) {
+  const used = new Set(
+    (devices || [])
+      .filter(d => d.key !== excludeKey && d.target && d.target.status_unit_id === statusUnitId)
+      .map(d => d.target.status_slot)
+  );
+  let slot = 0;
+  while (used.has(slot)) slot++;
+  return slot;
+}
+
+// validateStatusSlotConflicts returns an error string if any two devices in the
+// list share the same (status_unit_id, status_slot), or null if there is no conflict.
+function validateStatusSlotConflicts(devices) {
+  const seen = new Map();
+  for (const d of devices) {
+    const tgt = d.target || {};
+    if (!tgt.status_unit_id) continue;
+    const k = `${tgt.status_unit_id}:${tgt.status_slot}`;
+    if (seen.has(k)) {
+      return 'Status slot already used by another device.';
+    }
+    seen.set(k, d.key);
+  }
+  return null;
+}
+
 // ---------- toast ----------
 function showToast(msg) {
   const toast = document.getElementById('toast');
@@ -184,13 +214,16 @@ function renderTargetEdit(device) {
   const table   = document.createElement('table');
   table.className = 'field-table';
 
+  const statusUnitIdDefault = tgt.status_unit_id || 100;
+  const autoSlot = nextAvailableSlot(workingConfig.devices, statusUnitIdDefault, device.key);
   const numFields = [
-    { label: 'Port',           key: 'port',           value: tgt.port           ?? 0 },
+    { label: 'Port',           key: 'port',           value: tgt.port || 502 },
     { label: 'Unit ID',        key: 'unit_id',        value: tgt.unit_id        ?? 0 },
-    { label: 'Status Unit ID', key: 'status_unit_id', value: tgt.status_unit_id ?? 100 },
-    { label: 'Status Slot',    key: 'status_slot',    value: tgt.status_slot    ?? 0 },
+    { label: 'Status Unit ID', key: 'status_unit_id', value: statusUnitIdDefault },
+    { label: 'Status Slot',    key: 'status_slot',    value: autoSlot },
   ];
   const inputs = {};
+  let slotHintEl = null;
   numFields.forEach(f => {
     const tr  = document.createElement('tr');
     const th  = document.createElement('th');
@@ -203,9 +236,32 @@ function renderTargetEdit(device) {
     inp.value     = f.value;
     inputs[f.key] = inp;
     td.appendChild(inp);
+    if (f.key === 'status_slot') {
+      slotHintEl = document.createElement('span');
+      slotHintEl.className = 'slot-hint';
+      td.appendChild(slotHintEl);
+    }
     tr.appendChild(th);
     tr.appendChild(td);
     table.appendChild(tr);
+  });
+
+  function updateSlotHint(statusUnitId) {
+    if (!slotHintEl) return;
+    const used = (workingConfig.devices || [])
+      .filter(d => d.key !== device.key && d.target && d.target.status_unit_id === statusUnitId)
+      .map(d => d.target.status_slot)
+      .sort((a, b) => a - b);
+    slotHintEl.textContent = used.length > 0 ? ' Used: ' + used.join(', ') : '';
+  }
+
+  updateSlotHint(statusUnitIdDefault);
+
+  inputs['status_unit_id'].addEventListener('input', () => {
+    const uid = parseInt(inputs['status_unit_id'].value, 10) || 0;
+    const next = nextAvailableSlot(workingConfig.devices, uid, device.key);
+    inputs['status_slot'].value = next;
+    updateSlotHint(uid);
   });
 
   // Mode dropdown
@@ -236,7 +292,7 @@ function renderTargetEdit(device) {
     const idx = getSelectedDeviceIndex();
     if (idx < 0) return;
     const prev = workingConfig.devices[idx].target || {};
-    workingConfig.devices[idx].target = {
+    const next = {
       ...prev,
       port:           parseInt(inputs['port'].value,           10) || 0,
       unit_id:        parseInt(inputs['unit_id'].value,        10) || 0,
@@ -244,6 +300,14 @@ function renderTargetEdit(device) {
       status_slot:    parseInt(inputs['status_slot'].value,    10) || 0,
       mode:           inputs['mode'].value,
     };
+    // Build a temporary devices list with the proposed target to check for conflicts.
+    const proposed = workingConfig.devices.map((d, i) => i === idx ? { ...d, target: next } : d);
+    const conflictErr = validateStatusSlotConflicts(proposed);
+    if (conflictErr) {
+      showToast(conflictErr);
+      return;
+    }
+    workingConfig.devices[idx].target = next;
     renderTargetView(workingConfig.devices[idx]);
   });
 
@@ -491,6 +555,11 @@ async function loadView() {
 // ---------- Apply Config ----------
 
 document.getElementById('btn-apply-config').addEventListener('click', async () => {
+  const conflictErr = validateStatusSlotConflicts(workingConfig.devices);
+  if (conflictErr) {
+    showToast(conflictErr);
+    return;
+  }
   try {
     const res = await fetch('/api/config/apply', {
       method: 'PUT',
@@ -540,7 +609,7 @@ document.getElementById('btn-add').addEventListener('click', () => {
     display_name: key,
     source: { endpoint: '', unit_id: 0, timeout_ms: 1000, device_name: '' },
     reads:  [],
-    target: { port: 0, unit_id: 0, status_unit_id: 100, status_slot: 0, mode: DEFAULT_TARGET_MODE },
+    target: { port: 502, unit_id: 0, status_unit_id: 100, status_slot: 0, mode: DEFAULT_TARGET_MODE },
   };
   workingConfig.devices.push(newDevice);
   selectedDeviceKey = key;
