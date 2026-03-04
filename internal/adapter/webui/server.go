@@ -33,6 +33,7 @@ func NewServer(listen string, mgr Manager) *Server {
 
 	h := &handlers{mgr: mgr}
 	mux.HandleFunc("/api/config/view", h.handleConfigView)
+	mux.HandleFunc("/api/config/apply", h.handleConfigApply)
 	mux.HandleFunc("/api/config/raw", h.handleConfigRaw)
 	mux.HandleFunc("/api/reload", h.handleReload)
 	mux.HandleFunc("/api/restart", h.handleRestart)

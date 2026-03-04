@@ -9,6 +9,51 @@ body {
   flex-direction: column;
 }
 
+/* ---- Pending-changes banner ---- */
+.pending-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1rem;
+  background: #2a2000;
+  border-bottom: 1px solid #665500;
+  flex-shrink: 0;
+}
+
+.pending-banner.hidden {
+  display: none;
+}
+
+.pending-banner__msg {
+  font-size: 0.88rem;
+  color: #ffd966;
+}
+
+.pending-banner__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.btn-primary {
+  padding: 0.35rem 0.85rem;
+  border: 1px solid #2a8bc0;
+  border-radius: 4px;
+  background: #1a6ba0;
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.82rem;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #2a8bc0;
+}
+
+.btn-primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .layout {
   display: flex;
   flex: 1;

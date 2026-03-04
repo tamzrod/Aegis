@@ -1,7 +1,33 @@
 'use strict';
 
-let currentView = null;
+// ---------- state ----------
+let originalConfig = null;   // last-applied config (from server)
+let workingConfig  = null;   // working copy (modified locally before apply)
 
+// ---------- helpers ----------
+function deepCopy(obj) {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function configsEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// ---------- pending-change banner ----------
+function setPendingState(isPending) {
+  const banner = document.getElementById('pending-banner');
+  if (isPending) {
+    banner.classList.remove('hidden');
+  } else {
+    banner.classList.add('hidden');
+  }
+}
+
+function checkPending() {
+  setPendingState(!configsEqual(originalConfig, workingConfig));
+}
+
+// ---------- toast ----------
 function showToast(msg) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
@@ -10,6 +36,7 @@ function showToast(msg) {
   toast._timer = setTimeout(() => toast.classList.add('hidden'), 2500);
 }
 
+// ---------- render ----------
 function renderDevice(device) {
   const src = device.source;
   document.getElementById('src-endpoint').textContent    = src.endpoint    || '—';
@@ -34,8 +61,8 @@ function renderDevice(device) {
 }
 
 function selectDevice(key) {
-  if (!currentView) return;
-  const device = currentView.devices.find(d => d.key === key);
+  if (!workingConfig) return;
+  const device = workingConfig.devices.find(d => d.key === key);
   if (!device) return;
 
   document.querySelectorAll('#device-list li').forEach(li => {
@@ -45,10 +72,10 @@ function selectDevice(key) {
   renderDevice(device);
 }
 
-function renderDeviceList(view) {
+function renderDeviceList() {
   const list = document.getElementById('device-list');
   list.innerHTML = '';
-  view.devices.forEach(d => {
+  workingConfig.devices.forEach(d => {
     const li = document.createElement('li');
     li.textContent = d.display_name || d.key;
     li.dataset.key = d.key;
@@ -57,20 +84,57 @@ function renderDeviceList(view) {
   });
 }
 
+function renderAll() {
+  renderDeviceList();
+  if (workingConfig.selected_key) {
+    selectDevice(workingConfig.selected_key);
+  }
+}
+
+// ---------- load ----------
 async function loadView() {
   try {
     const res = await fetch('/api/config/view');
     if (!res.ok) throw new Error('HTTP ' + res.status);
-    currentView = await res.json();
-    renderDeviceList(currentView);
-    if (currentView.selected_key) {
-      selectDevice(currentView.selected_key);
-    }
+    originalConfig = await res.json();
+    workingConfig  = deepCopy(originalConfig);
+    renderAll();
+    setPendingState(false);
   } catch (e) {
     showToast('Load failed: ' + e.message);
   }
 }
 
+// ---------- Apply Config ----------
+document.getElementById('btn-apply-config').addEventListener('click', async () => {
+  try {
+    const res = await fetch('/api/config/apply', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(workingConfig),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      showToast('Apply failed: ' + (body.error || 'HTTP ' + res.status));
+      return;
+    }
+    originalConfig = deepCopy(workingConfig);
+    setPendingState(false);
+    showToast('Configuration applied.');
+  } catch (e) {
+    showToast('Apply failed: ' + e.message);
+  }
+});
+
+// ---------- Discard Changes ----------
+document.getElementById('btn-discard').addEventListener('click', () => {
+  workingConfig = deepCopy(originalConfig);
+  renderAll();
+  setPendingState(false);
+  showToast('Changes discarded.');
+});
+
+// ---------- disabled action buttons ----------
 function disabledClick() {
   showToast('Editing available in next phase');
 }
