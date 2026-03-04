@@ -300,3 +300,40 @@ func TestValidateStatusUnitIDConflictsWithDataUnitID(t *testing.T) {
 		t.Error("expected error when status_unit_id conflicts with a data unit_id on same port")
 	}
 }
+
+func TestValidateEndpointValid(t *testing.T) {
+	valid := []string{
+		"192.168.1.10:502",
+		"127.0.0.1:1502",
+		"0.0.0.0:1",
+		"255.255.255.255:65535",
+	}
+	for _, ep := range valid {
+		cfg := validBaseConfig()
+		cfg.Replicator.Units[0].Source.Endpoint = ep
+		if err := Validate(cfg); err != nil {
+			t.Errorf("endpoint %q: expected valid, got: %v", ep, err)
+		}
+	}
+}
+
+func TestValidateEndpointInvalid(t *testing.T) {
+	invalid := []string{
+		"192.168.1.10",          // missing port
+		"192.168.1.10:",         // empty port
+		":502",                  // missing IP
+		"modbus.local:502",      // hostname not allowed
+		"999.1.1.1:502",         // octet out of range
+		"192.168.1.10:70000",    // port out of range
+		"192.168.1.10:0",        // port 0 not valid
+		"192.168.1.10:abc",      // non-numeric port
+		"",                      // empty
+	}
+	for _, ep := range invalid {
+		cfg := validBaseConfig()
+		cfg.Replicator.Units[0].Source.Endpoint = ep
+		if err := Validate(cfg); err == nil {
+			t.Errorf("endpoint %q: expected invalid, got no error", ep)
+		}
+	}
+}

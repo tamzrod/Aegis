@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -62,8 +63,8 @@ func validateReplicator(cfg *Config) error {
 
 func validateUnitConfig(u UnitConfig) error {
 	// Source
-	if strings.TrimSpace(u.Source.Endpoint) == "" {
-		return fmt.Errorf("source.endpoint is required")
+	if err := validateIPv4Port(u.Source.Endpoint); err != nil {
+		return err
 	}
 	if u.Source.TimeoutMs <= 0 {
 		return fmt.Errorf("source.timeout_ms must be > 0")
@@ -210,5 +211,48 @@ func validateStatusSlots(cfg *Config) error {
 		}
 		seenSlots[sk][slot] = u.ID
 	}
+	return nil
+}
+
+// validateIPv4Port validates that endpoint is a strict IPv4:port string.
+// It trims whitespace, rejects hostnames, and validates each octet (0–255)
+// and the port (1–65535).
+func validateIPv4Port(endpoint string) error {
+	ep := strings.TrimSpace(endpoint)
+	if ep == "" {
+		return fmt.Errorf("source.endpoint is required")
+	}
+
+	colonIdx := strings.LastIndex(ep, ":")
+	if colonIdx < 0 {
+		return fmt.Errorf("source.endpoint must be in ip:port format (e.g. 192.168.1.1:502)")
+	}
+
+	host := ep[:colonIdx]
+	portStr := ep[colonIdx+1:]
+
+	if host == "" {
+		return fmt.Errorf("source.endpoint: IP address is required")
+	}
+	if portStr == "" {
+		return fmt.Errorf("source.endpoint: port is required")
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("source.endpoint: port must be a number between 1 and 65535")
+	}
+
+	parts := strings.Split(host, ".")
+	if len(parts) != 4 {
+		return fmt.Errorf("source.endpoint: IP address must be a valid IPv4 address (e.g. 192.168.1.1)")
+	}
+	for _, part := range parts {
+		octet, err := strconv.Atoi(part)
+		if err != nil || octet < 0 || octet > 255 {
+			return fmt.Errorf("source.endpoint: each IP octet must be between 0 and 255")
+		}
+	}
+
 	return nil
 }

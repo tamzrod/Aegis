@@ -46,6 +46,22 @@ function nextAvailableSlot(devices, statusUnitId, excludeKey) {
   return slot;
 }
 
+// nextAvailableUnitId finds the lowest unit_id (1–247) not already used by another
+// device on the same target.port. The device identified by excludeKey is excluded
+// so that re-opening its own form does not cause a self-conflict.
+// Returns null if no unit_id is available in the range 1–247.
+function nextAvailableUnitId(devices, port, excludeKey) {
+  const used = new Set(
+    (devices || [])
+      .filter(d => d.key !== excludeKey && d.target && d.target.port === port)
+      .map(d => d.target.unit_id)
+  );
+  for (let id = 1; id <= 247; id++) {
+    if (!used.has(id)) return id;
+  }
+  return null;
+}
+
 // validateStatusSlotConflicts returns an error string if any two devices in the
 // list share the same (status_unit_id, status_slot), or null if there is no conflict.
 function validateStatusSlotConflicts(devices) {
@@ -58,6 +74,46 @@ function validateStatusSlotConflicts(devices) {
       return 'Status slot already used by another device.';
     }
     seen.set(k, d.key);
+  }
+  return null;
+}
+
+// validateUnitIdConflicts returns an error string if any two devices in the list
+// share the same (port, unit_id), or null if there is no conflict.
+function validateUnitIdConflicts(devices) {
+  const seen = new Map();
+  for (const d of devices) {
+    const tgt = d.target || {};
+    if (!tgt.port || !tgt.unit_id) continue;
+    const k = `${tgt.port}:${tgt.unit_id}`;
+    if (seen.has(k)) {
+      return `Unit ID ${tgt.unit_id} is already in use on port ${tgt.port}.`;
+    }
+    seen.set(k, d.key);
+  }
+  return null;
+}
+
+// validateIPv4Port returns an error message string if value is not a valid strict
+// IPv4:port endpoint, or null if it is valid.
+// Rules: trim whitespace, reject hostnames, octets 0–255, port 1–65535.
+function validateIPv4Port(value) {
+  const s = (value || '').trim();
+  const colonIdx = s.lastIndexOf(':');
+  if (colonIdx < 0) return 'Must be in ip:port format (e.g. 192.168.1.1:502)';
+  const host    = s.substring(0, colonIdx);
+  const portStr = s.substring(colonIdx + 1);
+  if (!host)    return 'IP address is required';
+  if (!portStr) return 'Port is required';
+  if (!/^\d+$/.test(portStr)) return 'Port must be a number';
+  const port = parseInt(portStr, 10);
+  if (port < 1 || port > 65535) return 'Port must be between 1 and 65535';
+  const parts = host.split('.');
+  if (parts.length !== 4) return 'Must be a valid IPv4 address (e.g. 192.168.1.1:502)';
+  for (const part of parts) {
+    if (!/^\d+$/.test(part)) return 'Must be a valid IPv4 address (e.g. 192.168.1.1:502)';
+    const octet = parseInt(part, 10);
+    if (octet > 255) return 'Each IP octet must be 0–255';
   }
   return null;
 }
@@ -88,10 +144,10 @@ function renderSourceView(device) {
   const table = document.createElement('table');
   table.className = 'field-table';
   [
+    ['Device Name',  src.device_name || '—'],
     ['Endpoint',     src.endpoint    || '—'],
     ['Unit ID',      src.unit_id     ?? '—'],
     ['Timeout (ms)', src.timeout_ms  ?? '—'],
-    ['Device Name',  src.device_name || '—'],
   ].forEach(([label, value]) => {
     const tr = document.createElement('tr');
     tr.innerHTML = `<th>${label}</th><td>${value}</td>`;
@@ -120,12 +176,13 @@ function renderSourceEdit(device) {
   table.className = 'field-table';
 
   const fieldDefs = [
-    { label: 'Endpoint',     key: 'endpoint',    type: 'text',   value: src.endpoint    || '' },
+    { label: 'Device Name',  key: 'device_name', type: 'text',   value: src.device_name || '' },
+    { label: 'Endpoint',     key: 'endpoint',    type: 'text',   value: src.endpoint    || '127.0.0.1:502' },
     { label: 'Unit ID',      key: 'unit_id',     type: 'number', value: src.unit_id     ?? 0 },
     { label: 'Timeout (ms)', key: 'timeout_ms',  type: 'number', value: src.timeout_ms  ?? 0 },
-    { label: 'Device Name',  key: 'device_name', type: 'text',   value: src.device_name || '' },
   ];
   const inputs = {};
+  let endpointErrSpan = null;
   fieldDefs.forEach(f => {
     const tr  = document.createElement('tr');
     const th  = document.createElement('th');
@@ -138,6 +195,11 @@ function renderSourceEdit(device) {
     if (f.type === 'number') inp.min = '0';
     inputs[f.key] = inp;
     td.appendChild(inp);
+    if (f.key === 'endpoint') {
+      endpointErrSpan = document.createElement('span');
+      endpointErrSpan.className = 'field-error';
+      td.appendChild(endpointErrSpan);
+    }
     tr.appendChild(th);
     tr.appendChild(td);
     table.appendChild(tr);
@@ -146,7 +208,21 @@ function renderSourceEdit(device) {
   content.appendChild(table);
   inputs['endpoint'].focus();
 
+  // Inline endpoint validation: show error and guard the Save button.
+  function checkEndpoint() {
+    const err = validateIPv4Port(inputs['endpoint'].value);
+    endpointErrSpan.textContent = err || '';
+    btnSave.disabled = !!err;
+  }
+  inputs['endpoint'].addEventListener('input', checkEndpoint);
+  checkEndpoint();
+
   btnSave.addEventListener('click', () => {
+    const endpointErr = validateIPv4Port(inputs['endpoint'].value);
+    if (endpointErr) {
+      endpointErrSpan.textContent = endpointErr;
+      return;
+    }
     const idx = getSelectedDeviceIndex();
     if (idx < 0) return;
     workingConfig.devices[idx].source = {
@@ -302,6 +378,11 @@ function renderTargetEdit(device) {
     };
     // Build a temporary devices list with the proposed target to check for conflicts.
     const proposed = workingConfig.devices.map((d, i) => i === idx ? { ...d, target: next } : d);
+    const unitIdErr = validateUnitIdConflicts(proposed);
+    if (unitIdErr) {
+      showToast(unitIdErr);
+      return;
+    }
     const conflictErr = validateStatusSlotConflicts(proposed);
     if (conflictErr) {
       showToast(conflictErr);
@@ -604,12 +685,20 @@ document.getElementById('btn-add').addEventListener('click', () => {
     n++;
     key = `new-device-${n}`;
   }
+  const defaultPort = 502;
+  const autoUnitId = nextAvailableUnitId(workingConfig.devices, defaultPort, key);
+  if (autoUnitId === null) {
+    showToast('No available unit_id for port 502 (all 1–247 are in use).');
+    return;
+  }
+  const defaultStatusUnitId = 100;
+  const autoSlot = nextAvailableSlot(workingConfig.devices, defaultStatusUnitId, key);
   const newDevice = {
     key,
     display_name: key,
-    source: { endpoint: '', unit_id: 0, timeout_ms: 1000, device_name: '' },
+    source: { endpoint: '127.0.0.1:502', unit_id: 0, timeout_ms: 1000, device_name: '' },
     reads:  [],
-    target: { port: 502, unit_id: 0, status_unit_id: 100, status_slot: 0, mode: DEFAULT_TARGET_MODE },
+    target: { port: defaultPort, unit_id: autoUnitId, status_unit_id: defaultStatusUnitId, status_slot: autoSlot, mode: DEFAULT_TARGET_MODE },
   };
   workingConfig.devices.push(newDevice);
   selectedDeviceKey = key;
