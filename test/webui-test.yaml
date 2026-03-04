@@ -1,0 +1,28 @@
+# test/webui-test.yaml
+# Test configuration with WebUI enabled for observability testing.
+
+webui:
+  enabled: true
+  listen: ":8080"
+
+replicator:
+  units:
+    - id: "test-device"
+      source:
+        endpoint: "127.0.0.1:5020"
+        unit_id: 1
+        timeout_ms: 1000
+        device_name: "TestDevice"
+
+      reads:
+        - fc: 3
+          address: 0
+          quantity: 10
+          interval_ms: 1000
+
+      target:
+        port: 1502
+        unit_id: 1
+        status_unit_id: 255
+        status_slot: 0
+        mode: "B"

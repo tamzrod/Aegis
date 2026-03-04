@@ -1,0 +1,70 @@
+<!-- Aegis Device Configuration UI Concept (With Add/Delete) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="620" viewBox="0 0 1100 620">
+  <defs>
+    <style>
+      .title { font: 700 22px Arial; fill: #111; }
+      .section { font: 700 16px Arial; fill: #111; }
+      .text { font: 13px Arial; fill: #111; }
+      .muted { font: 12px Arial; fill: #555; }
+      .panel { fill: #ffffff; stroke: #111; stroke-width: 2; rx: 16; ry: 16; }
+      .item { fill: #f5f5f5; stroke: #111; stroke-width: 1.2; rx: 10; ry: 10; }
+      .selected { fill: #e8f2ff; stroke: #111; stroke-width: 1.5; rx: 10; ry: 10; }
+      .button { fill: #ffffff; stroke: #111; stroke-width: 1.5; rx: 8; ry: 8; }
+      .buttonText { font: 13px Arial; fill: #111; }
+    </style>
+  </defs>
+
+  <rect width="1100" height="620" fill="#ffffff"/>
+
+  <!-- Header -->
+  <text x="40" y="50" class="title">Aegis Device Configuration</text>
+
+  <!-- LEFT PANEL -->
+  <rect x="40" y="90" width="260" height="500" class="panel"/>
+  <text x="70" y="125" class="section">Devices</text>
+
+  <!-- Device List -->
+  <rect x="60" y="150" width="220" height="40" class="selected"/>
+  <text x="75" y="175" class="text">PLC1</text>
+
+  <rect x="60" y="200" width="220" height="40" class="item"/>
+  <text x="75" y="225" class="text">Meter-A</text>
+
+  <rect x="60" y="250" width="220" height="40" class="item"/>
+  <text x="75" y="275" class="text">Inverter-03</text>
+
+  <!-- Add / Delete Buttons -->
+  <rect x="60" y="520" width="100" height="35" class="button"/>
+  <text x="90" y="542" class="buttonText">+ Add</text>
+
+  <rect x="180" y="520" width="100" height="35" class="button"/>
+  <text x="205" y="542" class="buttonText">Delete</text>
+
+  <!-- RIGHT PANEL -->
+  <rect x="340" y="90" width="720" height="500" class="panel"/>
+
+  <!-- Source Section -->
+  <rect x="370" y="120" width="660" height="120" class="panel"/>
+  <text x="400" y="150" class="section">Source</text>
+  <text x="400" y="180" class="text">Endpoint: 192.168.1.100:502</text>
+  <text x="400" y="205" class="text">Unit ID: 1</text>
+  <text x="650" y="180" class="text">Timeout: 1000 ms</text>
+  <text x="650" y="205" class="text">Device Name: PLC1</text>
+
+  <!-- Reads Section -->
+  <rect x="370" y="260" width="660" height="140" class="panel"/>
+  <text x="400" y="290" class="section">Reads</text>
+  <text x="400" y="320" class="text">FC3 | Address: 0 | Quantity: 10 | Interval: 1000 ms</text>
+  <text x="400" y="345" class="text">FC4 | Address: 0 | Quantity: 8 | Interval: 500 ms</text>
+  <text x="400" y="370" class="muted">+ Add Read</text>
+
+  <!-- Target Section -->
+  <rect x="370" y="420" width="660" height="120" class="panel"/>
+  <text x="400" y="450" class="section">Target</text>
+  <text x="400" y="480" class="text">Port: 502</text>
+  <text x="520" y="480" class="text">Unit ID: 1</text>
+  <text x="650" y="480" class="text">Status Unit ID: 255</text>
+  <text x="400" y="505" class="text">Status Slot: 0</text>
+  <text x="520" y="505" class="text">Mode: B (Strict)</text>
+
+</svg>
