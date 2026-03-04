@@ -15,6 +15,7 @@ const maxConfigBodyBytes = 1 << 20 // 1 MiB
 type handlers struct {
 	mgr Manager
 	sp  StatusProvider
+	lp  ListenerProvider
 }
 
 // handleConfigRaw serves GET /api/config/raw and PUT /api/config/raw.
@@ -148,6 +149,7 @@ func (h *handlers) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 	} else {
 		state = struct {
 			Running bool   `json:"running"`
+			State   string `json:"state"`
 			Error   string `json:"error,omitempty"`
 		}{}
 	}
@@ -155,4 +157,62 @@ func (h *handlers) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(state)
+}
+
+// handleRuntimeStart serves POST /api/runtime/start.
+// It starts the runtime engine using the currently active config.
+// Returns 409 if the runtime is not in STOPPED state.
+func (h *handlers) handleRuntimeStart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := h.mgr.StartRuntime(); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "started"})
+}
+
+// handleRuntimeStop serves POST /api/runtime/stop.
+// It stops the running runtime engine without changing the config.
+// Returns 409 if the runtime is not in RUNNING state.
+func (h *handlers) handleRuntimeStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err := h.mgr.StopRuntime(); err != nil {
+		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "stopped"})
+}
+
+// handleRuntimeListeners serves GET /api/runtime/listeners.
+// It returns per-port listener status as a JSON array.
+func (h *handlers) handleRuntimeListeners(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var statuses interface{}
+	if h.lp != nil {
+		statuses = h.lp.ListenerStatuses()
+	} else {
+		statuses = []struct{}{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(statuses)
 }

@@ -33,6 +33,24 @@ func NewServer(listen string, store core.Store, authority Enforcer) *Server {
 	}
 }
 
+// NewServerWithListener creates a Server with a pre-bound net.Listener.
+// Using a pre-bound listener ensures Shutdown can always close it immediately,
+// eliminating the race between goroutine scheduling and Shutdown seeing a nil ln.
+func NewServerWithListener(listen string, ln net.Listener, store core.Store, authority Enforcer) *Server {
+	return &Server{
+		listen:    listen,
+		store:     store,
+		authority: authority,
+		ln:        ln,
+		done:      make(chan struct{}),
+	}
+}
+
+// Addr returns the listen address string for this server.
+func (s *Server) Addr() string {
+	return s.listen
+}
+
 // ListenAndServe starts accepting Modbus TCP connections.
 // Each connection is handled in its own goroutine.
 // This function blocks until the listener fails or Shutdown is called.
@@ -73,5 +91,31 @@ func (s *Server) Shutdown() {
 	if ln != nil {
 		ln.Close()
 		<-s.done
+	}
+}
+
+// Serve starts accepting Modbus TCP connections on the pre-bound listener
+// stored in s.ln (set by NewServerWithListener).
+// It blocks until the listener is closed or returns an error.
+func (s *Server) Serve() error {
+	s.mu.Lock()
+	ln := s.ln
+	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		s.ln = nil
+		s.mu.Unlock()
+		close(s.done)
+	}()
+
+	log.Printf("adapter: modbus tcp listening on %s", s.listen)
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return err
+		}
+		go HandleConn(conn, s.store, s.authority)
 	}
 }

@@ -1,10 +1,23 @@
-// app.js - Aegis WebUI Phase 0 (VIEW ONLY)
+// app.js - Aegis WebUI
 
 let currentConfig = null;
 let selectedDeviceKey = null;
+let runtimeState = 'STOPPED';
+let statusPollInterval = null;
 
 // Page initialization
 document.addEventListener('DOMContentLoaded', async () => {
+    // Attach runtime control button handlers
+    document.getElementById('startBtn').addEventListener('click', onStartRuntime);
+    document.getElementById('stopBtn').addEventListener('click', onStopRuntime);
+    document.getElementById('restartBtn').addEventListener('click', onRestartRuntime);
+    document.getElementById('addBtn').addEventListener('click', onAddDevice);
+    document.getElementById('deleteBtn').addEventListener('click', onDeleteDevice);
+
+    // Start polling runtime status (updates button guards)
+    await pollRuntimeStatus();
+    statusPollInterval = setInterval(pollRuntimeStatus, 2000);
+
     // Fetch config view from API
     try {
         const response = await fetch('/api/config/view');
@@ -29,11 +42,131 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Select first device if none selected
     selectedDeviceKey = currentConfig.selected_key || currentConfig.devices[0].key;
     renderDevicePanel();
-
-    // Attach button handlers
-    document.getElementById('addBtn').addEventListener('click', onAddDevice);
-    document.getElementById('deleteBtn').addEventListener('click', onDeleteDevice);
 });
+
+// ---------------------------------------------------------------------------
+// Runtime status polling and button state machine
+// ---------------------------------------------------------------------------
+
+async function pollRuntimeStatus() {
+    try {
+        const response = await fetch('/api/runtime/status');
+        if (!response.ok) return;
+        const status = await response.json();
+        updateRuntimeUI(status);
+    } catch (e) {
+        // WebUI server unreachable — leave UI as-is
+    }
+}
+
+function updateRuntimeUI(status) {
+    const state = (status.state || (status.running ? 'RUNNING' : 'STOPPED')).toUpperCase();
+    runtimeState = state;
+
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    const errorBar = document.getElementById('errorBar');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const restartBtn = document.getElementById('restartBtn');
+
+    // Update status dot colour
+    dot.className = 'status-dot';
+    switch (state) {
+        case 'RUNNING':
+            dot.classList.add('status-running');
+            text.textContent = 'Running';
+            break;
+        case 'STARTING':
+            dot.classList.add('status-starting');
+            text.textContent = 'Starting…';
+            break;
+        case 'STOPPING':
+            dot.classList.add('status-stopping');
+            text.textContent = 'Stopping…';
+            break;
+        default: // STOPPED
+            dot.classList.add('status-stopped');
+            text.textContent = status.error ? 'Error' : 'Stopped';
+    }
+
+    // Show/hide error bar
+    if (status.error) {
+        errorBar.textContent = '⚠ ' + status.error;
+        errorBar.style.display = 'block';
+    } else {
+        errorBar.style.display = 'none';
+    }
+
+    // Button guards: only enable buttons in valid transition states
+    const isStopped  = state === 'STOPPED';
+    const isRunning  = state === 'RUNNING';
+    const isTransitioning = state === 'STARTING' || state === 'STOPPING';
+
+    startBtn.disabled   = !isStopped || isTransitioning;
+    stopBtn.disabled    = !isRunning  || isTransitioning;
+    restartBtn.disabled = !isRunning  || isTransitioning;
+}
+
+async function onStartRuntime() {
+    setButtonsBusy();
+    try {
+        const res = await fetch('/api/runtime/start', { method: 'POST' });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            showError(body.error || 'Start failed');
+        }
+    } catch (e) {
+        showError('Start request failed: ' + e.message);
+    }
+    await pollRuntimeStatus();
+}
+
+async function onStopRuntime() {
+    setButtonsBusy();
+    try {
+        const res = await fetch('/api/runtime/stop', { method: 'POST' });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            showError(body.error || 'Stop failed');
+        }
+    } catch (e) {
+        showError('Stop request failed: ' + e.message);
+    }
+    await pollRuntimeStatus();
+}
+
+async function onRestartRuntime() {
+    setButtonsBusy();
+    try {
+        const res = await fetch('/api/restart', { method: 'POST' });
+        if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            showError(body.error || 'Restart failed');
+        }
+    } catch (e) {
+        showError('Restart request failed: ' + e.message);
+    }
+    // Restart is async server-side; poll a few times to pick up the new state
+    setTimeout(pollRuntimeStatus, 300);
+    await pollRuntimeStatus();
+}
+
+function setButtonsBusy() {
+    document.getElementById('startBtn').disabled   = true;
+    document.getElementById('stopBtn').disabled    = true;
+    document.getElementById('restartBtn').disabled = true;
+}
+
+function showError(msg) {
+    const bar = document.getElementById('errorBar');
+    bar.textContent = '⚠ ' + msg;
+    bar.style.display = 'block';
+}
+
+// ---------------------------------------------------------------------------
+// Device list and detail panel
+// ---------------------------------------------------------------------------
 
 function populateDeviceList() {
     const deviceList = document.getElementById('deviceList');

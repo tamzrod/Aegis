@@ -109,3 +109,74 @@ func TestConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestSetStarting(t *testing.T) {
+	var m RuntimeManager
+	m.SetStarting()
+	s := m.Status()
+	if s.Running {
+		t.Errorf("after SetStarting: want Running=false, got true")
+	}
+	if s.State != StateStarting {
+		t.Errorf("after SetStarting: want State=%q, got %q", StateStarting, s.State)
+	}
+}
+
+func TestSetStopping(t *testing.T) {
+	var m RuntimeManager
+	m.SetRunning()
+	m.SetStopping()
+	s := m.Status()
+	if s.Running {
+		t.Errorf("after SetStopping: want Running=false, got true")
+	}
+	if s.State != StateStopping {
+		t.Errorf("after SetStopping: want State=%q, got %q", StateStopping, s.State)
+	}
+}
+
+func TestSetStopped(t *testing.T) {
+	var m RuntimeManager
+	m.SetRunning()
+	m.SetStopped()
+	s := m.Status()
+	if s.Running {
+		t.Errorf("after SetStopped: want Running=false, got true")
+	}
+	if s.State != StateStopped {
+		t.Errorf("after SetStopped: want State=%q, got %q", StateStopped, s.State)
+	}
+}
+
+func TestGetState(t *testing.T) {
+	var m RuntimeManager
+	m.SetRunning()
+	if got := m.GetState(); got != StateRunning {
+		t.Errorf("GetState after SetRunning: want %q, got %q", StateRunning, got)
+	}
+	m.SetStopping()
+	if got := m.GetState(); got != StateStopping {
+		t.Errorf("GetState after SetStopping: want %q, got %q", StateStopping, got)
+	}
+}
+
+func TestSetRunningState(t *testing.T) {
+	var m RuntimeManager
+	m.SetRunning()
+	s := m.Status()
+	if s.State != StateRunning {
+		t.Errorf("SetRunning must set State=%q, got %q", StateRunning, s.State)
+	}
+}
+
+func TestSetErrorState(t *testing.T) {
+	var m RuntimeManager
+	m.SetError(errors.New("port in use"))
+	s := m.Status()
+	if s.State != StateStopped {
+		t.Errorf("SetError must set State=%q, got %q", StateStopped, s.State)
+	}
+	if s.Error != "port in use" {
+		t.Errorf("SetError must record error, got %q", s.Error)
+	}
+}

@@ -25,6 +25,12 @@ type Manager interface {
 	// Rebuild atomically stops the running engine and starts it with the new config.
 	// The caller is responsible for validating cfg before calling Rebuild.
 	Rebuild(cfg *config.Config, yamlBytes []byte) error
+	// StartRuntime starts the runtime engine using the active config.
+	// Returns an error if the runtime is not in STOPPED state.
+	StartRuntime() error
+	// StopRuntime stops the running runtime engine without changing the config.
+	// Returns an error if the runtime is not in RUNNING state.
+	StopRuntime() error
 }
 
 // StatusProvider is an optional extension of Manager for exposing runtime state.
@@ -32,6 +38,13 @@ type Manager interface {
 // GET /api/runtime/status with the result of RuntimeStatus().
 type StatusProvider interface {
 	RuntimeStatus() runtime.RuntimeState
+}
+
+// ListenerProvider is an optional extension for exposing per-port listener status.
+// If the concrete Manager also implements ListenerProvider, the WebUI serves
+// GET /api/runtime/listeners.
+type ListenerProvider interface {
+	ListenerStatuses() []runtime.ListenerStatus
 }
 
 // Server is the embedded WebUI HTTP server.
@@ -42,12 +55,16 @@ type Server struct {
 
 // NewServer creates a WebUI Server that listens on listen and uses mgr for runtime operations.
 // If mgr also implements StatusProvider, the /api/runtime/status endpoint becomes active.
+// If mgr also implements ListenerProvider, the /api/runtime/listeners endpoint becomes active.
 func NewServer(listen string, mgr Manager) *Server {
 	mux := http.NewServeMux()
 
 	h := &handlers{mgr: mgr}
 	if sp, ok := mgr.(StatusProvider); ok {
 		h.sp = sp
+	}
+	if lp, ok := mgr.(ListenerProvider); ok {
+		h.lp = lp
 	}
 	mux.HandleFunc("/api/config/view", h.handleConfigView)
 	mux.HandleFunc("/api/config/apply", h.handleConfigApply)
@@ -57,6 +74,9 @@ func NewServer(listen string, mgr Manager) *Server {
 	mux.HandleFunc("/api/reload", h.handleReload)
 	mux.HandleFunc("/api/restart", h.handleRestart)
 	mux.HandleFunc("/api/runtime/status", h.handleRuntimeStatus)
+	mux.HandleFunc("/api/runtime/start", h.handleRuntimeStart)
+	mux.HandleFunc("/api/runtime/stop", h.handleRuntimeStop)
+	mux.HandleFunc("/api/runtime/listeners", h.handleRuntimeListeners)
 
 	webFS, _ := fs.Sub(webFiles, "web")
 	mux.Handle("/", http.FileServer(http.FS(webFS)))

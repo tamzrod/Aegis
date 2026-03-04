@@ -9,7 +9,21 @@
 <body>
     <div class="container">
         <header>
-            <h1>Aegis Device Configuration</h1>
+            <div class="header-top">
+                <h1>Aegis Device Configuration</h1>
+                <div class="runtime-controls">
+                    <div class="status-bar" id="statusBar">
+                        <span class="status-dot" id="statusDot"></span>
+                        <span id="statusText">Checking...</span>
+                    </div>
+                    <div class="runtime-buttons">
+                        <button class="btn btn-success" id="startBtn" disabled>Start</button>
+                        <button class="btn btn-warning" id="stopBtn" disabled>Stop</button>
+                        <button class="btn btn-secondary" id="restartBtn" disabled>Restart</button>
+                    </div>
+                </div>
+            </div>
+            <div id="errorBar" class="error-bar" style="display:none;"></div>
         </header>
 
         <div class="layout">

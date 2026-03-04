@@ -17,11 +17,13 @@ import (
 
 // mockManager implements Manager for testing.
 type mockManager struct {
-	yaml         []byte
-	applyErr     error
-	reloadErr    error
-	rebuildErr   error
-	reloadCalled int32 // accessed atomically
+	yaml             []byte
+	applyErr         error
+	reloadErr        error
+	rebuildErr       error
+	startRuntimeErr  error
+	stopRuntimeErr   error
+	reloadCalled     int32 // accessed atomically
 }
 
 func (m *mockManager) GetActiveConfigYAML() []byte  { return m.yaml }
@@ -31,6 +33,8 @@ func (m *mockManager) ReloadFromDisk() error {
 	return m.reloadErr
 }
 func (m *mockManager) Rebuild(_ *config.Config, _ []byte) error { return m.rebuildErr }
+func (m *mockManager) StartRuntime() error                      { return m.startRuntimeErr }
+func (m *mockManager) StopRuntime() error                       { return m.stopRuntimeErr }
 
 func newTestServer(mgr Manager) http.Handler {
 	s := NewServer(":0", mgr)
@@ -591,6 +595,184 @@ func TestPostConfigImportMethodNotAllowed(t *testing.T) {
 	h := newTestServer(mgr)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config/import", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// mockManagerWithListeners extends mockManagerWithStatus and implements ListenerProvider.
+type mockManagerWithListeners struct {
+	mockManagerWithStatus
+	listeners []runtime.ListenerStatus
+}
+
+func (m *mockManagerWithListeners) ListenerStatuses() []runtime.ListenerStatus { return m.listeners }
+
+// TestRuntimeStartSuccess verifies POST /api/runtime/start returns 200 when StartRuntime succeeds.
+func TestRuntimeStartSuccess(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/start", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "started" {
+		t.Errorf("want status=started, got %q", resp["status"])
+	}
+}
+
+// TestRuntimeStartConflict verifies POST /api/runtime/start returns 409 when start fails.
+func TestRuntimeStartConflict(t *testing.T) {
+	mgr := &mockManager{startRuntimeErr: errors.New("cannot start: runtime state is RUNNING")}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/start", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "error") {
+		t.Errorf("expected JSON error field in body: %q", body)
+	}
+}
+
+// TestRuntimeStartMethodNotAllowed verifies GET /api/runtime/start returns 405.
+func TestRuntimeStartMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/start", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// TestRuntimeStopSuccess verifies POST /api/runtime/stop returns 200 when StopRuntime succeeds.
+func TestRuntimeStopSuccess(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/stop", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "stopped" {
+		t.Errorf("want status=stopped, got %q", resp["status"])
+	}
+}
+
+// TestRuntimeStopConflict verifies POST /api/runtime/stop returns 409 when stop fails.
+func TestRuntimeStopConflict(t *testing.T) {
+	mgr := &mockManager{stopRuntimeErr: errors.New("cannot stop: runtime state is STOPPED")}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/stop", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "error") {
+		t.Errorf("expected JSON error field in body: %q", body)
+	}
+}
+
+// TestRuntimeStopMethodNotAllowed verifies GET /api/runtime/stop returns 405.
+func TestRuntimeStopMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/stop", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// TestRuntimeListenersWithProvider verifies GET /api/runtime/listeners returns listener JSON.
+func TestRuntimeListenersWithProvider(t *testing.T) {
+	mgr := &mockManagerWithListeners{
+		listeners: []runtime.ListenerStatus{
+			{Port: 502, Status: "listening"},
+			{Port: 503, Status: "error", Error: "bind: address already in use"},
+		},
+	}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/listeners", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+	var got []runtime.ListenerStatus
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 listeners, got %d", len(got))
+	}
+	if got[0].Port != 502 || got[0].Status != "listening" {
+		t.Errorf("unexpected first listener: %+v", got[0])
+	}
+	if got[1].Port != 503 || got[1].Status != "error" {
+		t.Errorf("unexpected second listener: %+v", got[1])
+	}
+}
+
+// TestRuntimeListenersNoProvider verifies GET /api/runtime/listeners returns empty array without provider.
+func TestRuntimeListenersNoProvider(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/listeners", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "[") {
+		t.Errorf("expected JSON array in body: %q", body)
+	}
+}
+
+// TestRuntimeListenersMethodNotAllowed verifies POST /api/runtime/listeners returns 405.
+func TestRuntimeListenersMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/listeners", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
