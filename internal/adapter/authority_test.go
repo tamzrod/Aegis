@@ -858,6 +858,172 @@ func TestDebugIllegalDataAddressMultiUnit(t *testing.T) {
 	}
 }
 
+// TestReproMultiUnitFanout is the canonical reproduction test for the "Illegal Data
+// Address on unit 2" scenario described in the problem statement.  Unlike the earlier
+// manual-store tests, this test builds the memory store via config.BuildMemStore so
+// that the full production code path — config → store allocation → authority registry →
+// HandleConn dispatch — is exercised end-to-end.
+//
+// Config under test (verbatim from the problem statement):
+//
+//   new-device-1: source 127.0.0.1:502 unit=1, target port=11502 unit=1 status_unit=100 slot=0 mode=B
+//   new-device-2: source 127.0.0.1:502 unit=1, target port=11502 unit=2 status_unit=100 slot=1 mode=B
+//
+// Assertions:
+//  1. Memory surfaces (11502,1) and (11502,2) are present in the store.
+//  2. Authority entries (11502,1) and (11502,2) are present in the registry.
+//  3. FC3 addr=0 qty=10 for unit_id=1 returns a data response (not exception 0x02).
+//  4. FC3 addr=0 qty=10 for unit_id=2 returns a data response (not exception 0x02).
+func TestReproMultiUnitFanout(t *testing.T) {
+	// Go requires addressable values for *uint16 struct fields; named variables are
+	// necessary — the address of a literal (&uint16(100)) is not valid syntax.
+	statusUnitID := uint16(100)
+	slot0 := uint16(0)
+	slot1 := uint16(1)
+
+	cfg := &config.Config{
+		Replicator: config.ReplicatorConfig{
+			Units: []config.UnitConfig{
+				{
+					ID: "new-device-1",
+					Source: config.SourceConfig{
+						Endpoint:   "127.0.0.1:502",
+						UnitID:     1,
+						TimeoutMs:  1000,
+						DeviceName: "test1",
+					},
+					Reads: []config.ReadConfig{
+						{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000},
+					},
+					Target: config.TargetConfig{
+						Port:         11502,
+						UnitID:       1,
+						StatusUnitID: &statusUnitID,
+						StatusSlot:   &slot0,
+						Offsets:      map[int]uint16{},
+						Mode:         config.TargetModeB,
+					},
+				},
+				{
+					ID: "new-device-2",
+					Source: config.SourceConfig{
+						Endpoint:   "127.0.0.1:502",
+						UnitID:     1,
+						TimeoutMs:  1000,
+						DeviceName: "test2",
+					},
+					Reads: []config.ReadConfig{
+						{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000},
+					},
+					Target: config.TargetConfig{
+						Port:         11502,
+						UnitID:       2,
+						StatusUnitID: &statusUnitID,
+						StatusSlot:   &slot1,
+						Offsets:      map[int]uint16{},
+						Mode:         config.TargetModeB,
+					},
+				},
+			},
+		},
+	}
+
+	// Step 1: Build the memory store via the production code path.
+	store, err := config.BuildMemStore(cfg)
+	if err != nil {
+		t.Fatalf("BuildMemStore: %v", err)
+	}
+
+	// Step 2: Assert both data memory surfaces were created.
+	for _, uid := range []uint16{1, 2} {
+		id := core.MemoryID{Port: 11502, UnitID: uid}
+		if _, ok := store.Get(id); !ok {
+			t.Errorf("memory surface (port=11502 unit=%d) not found in store", uid)
+		}
+	}
+
+	// Step 3: Build authority registry and assert both entries are present.
+	// In mode B the registry rejects FC6 writes (0x01) for registered targets;
+	// a rejected write proves the entry exists.
+	health := newMockHealth()
+	health.setHealthy("new-device-1", 0)
+	health.setHealthy("new-device-2", 0)
+	registry := BuildAuthorityRegistry(cfg, health)
+
+	for _, uid := range []uint16{1, 2} {
+		if _, rejected := registry.Enforce(11502, uid, 6, 0, 1); !rejected {
+			t.Errorf("authority entry (port=11502 unit=%d) missing from registry", uid)
+		}
+	}
+
+	// Step 4 & 5: Send FC3 addr=0 qty=10 to each unit ID and verify data responses.
+	// Builds a 12-byte Modbus TCP frame: MBAP(6 bytes) + FC3 request(6 bytes).
+	// The MBAP length field counts: unitID(1) + FC(1) + address(2) + quantity(2) = 6.
+	const mbapPDULen = 6
+	buildFC3 := func(unitID byte, address, quantity uint16) []byte {
+		frame := make([]byte, 12)
+		binary.BigEndian.PutUint16(frame[0:2], 1)          // txID
+		binary.BigEndian.PutUint16(frame[2:4], 0)          // protoID
+		binary.BigEndian.PutUint16(frame[4:6], mbapPDULen) // MBAP length: unitID + FC + addr + qty
+		frame[6] = unitID                                   // unit ID
+		frame[7] = 3                                        // FC3
+		binary.BigEndian.PutUint16(frame[8:10], address)   // start address
+		binary.BigEndian.PutUint16(frame[10:12], quantity) // quantity
+		return frame
+	}
+
+	sendRequest := func(unitID byte) []byte {
+		t.Helper()
+		frame := buildFC3(unitID, 0, 10)
+
+		srvRaw, cli := net.Pipe()
+		srv := &fakeConn{Conn: srvRaw, localAddr: &net.TCPAddr{Port: 11502}}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			HandleConn(srv, store, registry)
+		}()
+
+		if _, err := cli.Write(frame); err != nil {
+			t.Fatalf("write FC3 request unit_id=%d: %v", unitID, err)
+		}
+		mbap := make([]byte, 7)
+		if _, err := io.ReadFull(cli, mbap); err != nil {
+			t.Fatalf("read MBAP unit_id=%d: %v", unitID, err)
+		}
+		pduLen := int(binary.BigEndian.Uint16(mbap[4:6])) - 1
+		pdu := make([]byte, pduLen)
+		if _, err := io.ReadFull(cli, pdu); err != nil {
+			t.Fatalf("read PDU unit_id=%d: %v", unitID, err)
+		}
+		cli.Close()
+		<-done
+		return pdu
+	}
+
+	for _, uid := range []byte{1, 2} {
+		pdu := sendRequest(uid)
+		if len(pdu) == 0 {
+			t.Errorf("unit_id=%d: empty response", uid)
+			continue
+		}
+		// Exception PDU: high bit of pdu[0] set.
+		if pdu[0]&0x80 != 0 {
+			t.Errorf("unit_id=%d: got exception PDU %v (exception code 0x%02X); expected data response",
+				uid, pdu, pdu[1])
+			continue
+		}
+		// Normal FC3 response: pdu[0]=0x03, pdu[1]=byte count (20 for 10 registers).
+		if pdu[0] != 0x03 {
+			t.Errorf("unit_id=%d: expected FC3 response byte (0x03), got 0x%02X", uid, pdu[0])
+		}
+		wantByteCount := byte(10 * 2)
+		if len(pdu) < 2 || pdu[1] != wantByteCount {
+			t.Errorf("unit_id=%d: expected byte count %d in FC3 response, got PDU: %v", uid, wantByteCount, pdu)
+		}
+	}
+}
+
 // --------------------
 // Helpers
 // --------------------
