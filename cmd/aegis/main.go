@@ -32,16 +32,16 @@ func main() {
 	}
 
 	// --------------------
-	// Create the Runtime and start the engine
+	// Create the RuntimeManager and start the engine
 	// --------------------
-	rt := NewRuntime(cfgPath)
+	rt := NewRuntimeManager(cfgPath)
 
 	rawYAML, err := os.ReadFile(cfgPath)
 	if err != nil {
 		log.Fatalf("aegis: read config file: %v", err)
 	}
 
-	if err := rt.StartEngine(cfg, rawYAML); err != nil {
+	if err := rt.Start(cfg, rawYAML); err != nil {
 		rt.SetError(err)
 		log.Fatalf("aegis: engine start failed: %v", err)
 	}

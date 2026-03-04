@@ -1,7 +1,7 @@
 // cmd/aegis/runtime.go
-// Runtime holds the currently running Aegis configuration and all active
-// components derived from it.  NewRuntime creates a hollow Runtime (no engine
-// running); StartEngine populates it from a validated Config and raw YAML bytes.
+// RuntimeManager holds the currently running Aegis configuration and all active
+// components derived from it.  NewRuntimeManager creates a hollow RuntimeManager
+// (no engine running); Start populates it from a validated Config and raw YAML bytes.
 package main
 
 import (
@@ -19,59 +19,73 @@ import (
 	runtimepkg "github.com/tamzrod/Aegis/internal/runtime"
 )
 
-// Runtime holds the active configuration and all running components.
+// RuntimeManager holds the active configuration and all running components.
 // It implements webui.Manager so the WebUI server can interact with it.
-type Runtime struct {
+type RuntimeManager struct {
 	mu               sync.Mutex
+	running          bool
 	activeConfigYAML []byte
 	configPath       string
 	cancel           context.CancelFunc
 	servers          []*adapter.Server
-	rtm              runtimepkg.RuntimeManager
+	state            runtimepkg.RuntimeManager
 }
 
-// NewRuntime creates a hollow Runtime that tracks cfgPath and runtime state
-// but has no engine running yet.  Call StartEngine after config validation.
-func NewRuntime(cfgPath string) *Runtime {
-	return &Runtime{configPath: cfgPath}
+// NewRuntimeManager creates a hollow RuntimeManager that tracks cfgPath and
+// runtime state but has no engine running yet.  Call Start after config validation.
+func NewRuntimeManager(cfgPath string) *RuntimeManager {
+	return &RuntimeManager{configPath: cfgPath}
 }
 
 // SetError marks the runtime as not running and records a startup error.
 // It is called by main when config validation or engine startup fails.
-func (r *Runtime) SetError(err error) {
-	r.rtm.SetError(err)
+func (r *RuntimeManager) SetError(err error) {
+	r.state.SetError(err)
 }
 
-// StartEngine builds and starts the engine from a validated Config.
+// Start builds and starts the engine from a validated Config.
 // The caller must have previously called config.Validate(cfg).
-func (r *Runtime) StartEngine(cfg *config.Config, yamlBytes []byte) error {
+func (r *RuntimeManager) Start(cfg *config.Config, yamlBytes []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.rebuildLocked(cfg, yamlBytes)
+	return r.rebuild(cfg, yamlBytes)
 }
 
 // Stop cancels the running engine context and shuts down all Modbus listeners.
 // It is called on graceful process shutdown.
-func (r *Runtime) Stop() {
+func (r *RuntimeManager) Stop() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.cancel != nil {
-		r.cancel()
+	if r.running {
+		if r.cancel != nil {
+			r.cancel()
+		}
+		r.running = false
 	}
 	for _, srv := range r.servers {
 		srv.Shutdown()
 	}
+	r.servers = nil
+}
+
+// Rebuild atomically stops the running engine (if any), builds new components
+// from cfg, and starts them.  It is safe to call whether or not the engine is
+// currently running.  The caller must hold no locks.
+func (r *RuntimeManager) Rebuild(cfg *config.Config, yamlBytes []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.rebuild(cfg, yamlBytes)
 }
 
 // RuntimeStatus implements webui.StatusProvider.
 // It returns a thread-safe copy of the current runtime state.
-func (r *Runtime) RuntimeStatus() runtimepkg.RuntimeState {
-	return r.rtm.Status()
+func (r *RuntimeManager) RuntimeStatus() runtimepkg.RuntimeState {
+	return r.state.Status()
 }
 
 // GetActiveConfigYAML implements webui.Manager.
 // It returns a copy of the active config YAML bytes.
-func (r *Runtime) GetActiveConfigYAML() []byte {
+func (r *RuntimeManager) GetActiveConfigYAML() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := make([]byte, len(r.activeConfigYAML))
@@ -81,7 +95,7 @@ func (r *Runtime) GetActiveConfigYAML() []byte {
 
 // ApplyConfig implements webui.Manager.
 // It parses yamlBytes, validates, writes to disk, then atomically rebuilds the runtime.
-func (r *Runtime) ApplyConfig(yamlBytes []byte) error {
+func (r *RuntimeManager) ApplyConfig(yamlBytes []byte) error {
 	cfg, err := config.LoadBytes(yamlBytes)
 	if err != nil {
 		return err
@@ -97,12 +111,12 @@ func (r *Runtime) ApplyConfig(yamlBytes []byte) error {
 		return fmt.Errorf("write config file: %w", err)
 	}
 
-	return r.rebuildLocked(cfg, yamlBytes)
+	return r.rebuild(cfg, yamlBytes)
 }
 
 // ReloadFromDisk implements webui.Manager.
 // It re-reads the config file, validates it, then atomically rebuilds the runtime.
-func (r *Runtime) ReloadFromDisk() error {
+func (r *RuntimeManager) ReloadFromDisk() error {
 	r.mu.Lock()
 	path := r.configPath
 	r.mu.Unlock()
@@ -122,17 +136,20 @@ func (r *Runtime) ReloadFromDisk() error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.rebuildLocked(cfg, data)
+	return r.rebuild(cfg, data)
 }
 
-// rebuildLocked performs an atomic runtime swap.  The caller must hold r.mu.
-// It stops the old engine and Modbus listeners, then starts new ones.
-func (r *Runtime) rebuildLocked(cfg *config.Config, yamlBytes []byte) error {
-	// Stop old engine.
-	if r.cancel != nil {
-		r.cancel()
+// rebuild performs an atomic runtime swap.  The caller must hold r.mu.
+// If the runtime is currently running, it stops pollers (via context cancel)
+// and adapters (via Shutdown) before starting new ones.
+func (r *RuntimeManager) rebuild(cfg *config.Config, yamlBytes []byte) error {
+	// Stop pollers and adapters if running.
+	if r.running {
+		if r.cancel != nil {
+			r.cancel()
+		}
+		r.running = false
 	}
-	// Stop old Modbus listeners (waits for each listener goroutine to exit).
 	for _, srv := range r.servers {
 		srv.Shutdown()
 	}
@@ -157,6 +174,7 @@ func (r *Runtime) rebuildLocked(cfg *config.Config, yamlBytes []byte) error {
 		seenPorts[u.Target.Port] = struct{}{}
 	}
 
+	// Start adapters.
 	var newServers []*adapter.Server
 	for port := range seenPorts {
 		listenAddr := fmt.Sprintf(":%d", port)
@@ -169,6 +187,7 @@ func (r *Runtime) rebuildLocked(cfg *config.Config, yamlBytes []byte) error {
 		}(listenAddr, srv)
 	}
 
+	// Start pollers.
 	for _, u := range units {
 		out := make(chan engine.PollResult, 8)
 		go runOrchestrator(ctx, u.Poller.UnitID(), u.Poller, u.Writer, healthStore, out)
@@ -176,8 +195,9 @@ func (r *Runtime) rebuildLocked(cfg *config.Config, yamlBytes []byte) error {
 	}
 
 	r.cancel = cancel
+	r.running = true
 	r.servers = newServers
 	r.activeConfigYAML = yamlBytes
-	r.rtm.SetRunning()
+	r.state.SetRunning()
 	return nil
 }
