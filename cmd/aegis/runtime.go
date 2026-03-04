@@ -17,6 +17,7 @@ import (
 	"github.com/tamzrod/Aegis/internal/adapter"
 	"github.com/tamzrod/Aegis/internal/config"
 	"github.com/tamzrod/Aegis/internal/engine"
+	runtimepkg "github.com/tamzrod/Aegis/internal/runtime"
 )
 
 // Runtime holds the active configuration and all running components.
@@ -27,6 +28,7 @@ type Runtime struct {
 	configPath       string
 	cancel           context.CancelFunc
 	servers          []*adapter.Server
+	rtm              runtimepkg.RuntimeManager
 }
 
 // BuildRuntime constructs a new Runtime from a validated Config, its raw YAML bytes,
@@ -71,14 +73,15 @@ func BuildRuntime(cfg *config.Config, cfgYAML []byte, cfgPath string) (*Runtime,
 		go u.Poller.Run(ctx, out)
 	}
 
-	return &Runtime{
+	rt := &Runtime{
 		activeConfigYAML: cfgYAML,
 		configPath:       cfgPath,
 		cancel:           cancel,
 		servers:          servers,
-	}, nil
+	}
+	rt.rtm.SetRunning()
+	return rt, nil
 }
-
 // Stop cancels the running engine context and shuts down all Modbus listeners.
 // It is called on graceful process shutdown.
 func (r *Runtime) Stop() {
@@ -90,6 +93,12 @@ func (r *Runtime) Stop() {
 	for _, srv := range r.servers {
 		srv.Shutdown()
 	}
+}
+
+// RuntimeStatus implements webui.StatusProvider.
+// It returns a thread-safe copy of the current runtime state.
+func (r *Runtime) RuntimeStatus() runtimepkg.RuntimeState {
+	return r.rtm.Status()
 }
 
 // GetActiveConfigYAML implements webui.Manager.
@@ -201,5 +210,6 @@ func (r *Runtime) rebuildLocked(cfg *config.Config, yamlBytes []byte) error {
 	r.cancel = cancel
 	r.servers = newServers
 	r.activeConfigYAML = yamlBytes
+	r.rtm.SetRunning()
 	return nil
 }

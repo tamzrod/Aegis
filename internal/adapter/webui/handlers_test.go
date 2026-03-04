@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/tamzrod/Aegis/internal/runtime"
 )
 
 // mockManager implements Manager for testing.
@@ -349,6 +351,106 @@ func TestPutConfigApplyMethodNotAllowed(t *testing.T) {
 	h := newTestServer(mgr)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config/apply", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// mockManagerWithStatus extends mockManager and implements StatusProvider.
+type mockManagerWithStatus struct {
+	mockManager
+	state runtime.RuntimeState
+}
+
+func (m *mockManagerWithStatus) RuntimeStatus() runtime.RuntimeState { return m.state }
+
+// TestRuntimeStatusRunning verifies that GET /api/runtime/status returns running=true.
+func TestRuntimeStatusRunning(t *testing.T) {
+	mgr := &mockManagerWithStatus{state: runtime.RuntimeState{Running: true}}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+
+	var got runtime.RuntimeState
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Running {
+		t.Errorf("want running=true, got false")
+	}
+	if got.Error != "" {
+		t.Errorf("want empty error, got %q", got.Error)
+	}
+}
+
+// TestRuntimeStatusError verifies that GET /api/runtime/status returns running=false with error.
+func TestRuntimeStatusError(t *testing.T) {
+	mgr := &mockManagerWithStatus{
+		state: runtime.RuntimeState{Running: false, Error: "dial timeout"},
+	}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+
+	var got runtime.RuntimeState
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Running {
+		t.Errorf("want running=false, got true")
+	}
+	if got.Error != "dial timeout" {
+		t.Errorf("want error=%q, got %q", "dial timeout", got.Error)
+	}
+}
+
+// TestRuntimeStatusNoProvider verifies that GET /api/runtime/status returns running=false
+// when the manager does not implement StatusProvider.
+func TestRuntimeStatusNoProvider(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/runtime/status", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+
+	var got runtime.RuntimeState
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Running {
+		t.Errorf("want running=false, got true")
+	}
+}
+
+// TestRuntimeStatusMethodNotAllowed verifies that POST /api/runtime/status returns 405.
+func TestRuntimeStatusMethodNotAllowed(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/runtime/status", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 

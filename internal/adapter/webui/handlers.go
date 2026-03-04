@@ -14,6 +14,7 @@ var osExit = os.Exit
 
 type handlers struct {
 	mgr Manager
+	sp  StatusProvider
 }
 
 // handleConfigRaw serves GET /api/config/raw and PUT /api/config/raw.
@@ -87,4 +88,29 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// handleRuntimeStatus serves GET /api/runtime/status.
+// It returns the current RuntimeState as JSON.
+// If no StatusProvider is available it returns the zero state (running=false).
+func (h *handlers) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var state interface{}
+	if h.sp != nil {
+		s := h.sp.RuntimeStatus()
+		state = s
+	} else {
+		state = struct {
+			Running bool   `json:"running"`
+			Error   string `json:"error,omitempty"`
+		}{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(state)
 }
