@@ -4,6 +4,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -13,52 +14,76 @@ import (
 	"github.com/tamzrod/Aegis/internal/config"
 )
 
+const defaultConfigPath = "config.yaml"
+const defaultWebUIListen = ":8080"
+
 func main() {
-	if len(os.Args) < 2 {
-		log.Fatal("usage: aegis <config.yaml>")
+	// --------------------
+	// Determine config path (default: "config.yaml" in working directory)
+	// --------------------
+	cfgPath := defaultConfigPath
+	if len(os.Args) >= 2 {
+		cfgPath = os.Args[1]
 	}
 
-	cfgPath := os.Args[1]
+	rt := NewRuntimeManager(cfgPath)
+
+	webuiListen := defaultWebUIListen
+	startWebUI := false
 
 	// --------------------
 	// Load and validate configuration
 	// --------------------
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		log.Fatalf("config load failed: %v", err)
-	}
-	if err := config.Validate(cfg); err != nil {
-		log.Fatalf("config validation failed: %v", err)
+	if _, statErr := os.Stat(cfgPath); errors.Is(statErr, os.ErrNotExist) {
+		// Config file not found — start WebUI only, runtime remains disabled.
+		log.Println("aegis: no config file found, starting WebUI only")
+		startWebUI = true
+	} else {
+		cfg, err := config.Load(cfgPath)
+		if err != nil {
+			log.Printf("aegis: config load failed: %v", err)
+			rt.SetError(err)
+			startWebUI = true
+		} else if err := config.Validate(cfg); err != nil {
+			log.Printf("aegis: config validation failed: %v", err)
+			rt.SetError(err)
+			webuiListen = cfg.WebUI.Listen
+			startWebUI = true
+		} else {
+			// --------------------
+			// Config is valid — start the engine
+			// --------------------
+			webuiListen = cfg.WebUI.Listen
+
+			rawYAML, err := os.ReadFile(cfgPath)
+			if err != nil {
+				log.Printf("aegis: read config file: %v", err)
+				rt.SetError(err)
+				startWebUI = true
+			} else {
+				if err := rt.Start(cfg, rawYAML); err != nil {
+					rt.SetError(err)
+					log.Printf("aegis: engine start failed: %v", err)
+				}
+
+				defer rt.Stop()
+
+				startWebUI = cfg.WebUI.Enabled
+			}
+		}
 	}
 
 	// --------------------
-	// Create the RuntimeManager and start the engine
+	// Start WebUI HTTP adapter
 	// --------------------
-	rt := NewRuntimeManager(cfgPath)
-
-	rawYAML, err := os.ReadFile(cfgPath)
-	if err != nil {
-		log.Fatalf("aegis: read config file: %v", err)
-	}
-
-	if err := rt.Start(cfg, rawYAML); err != nil {
-		rt.SetError(err)
-		log.Fatalf("aegis: engine start failed: %v", err)
-	}
-
-	defer rt.Stop()
-
-	// --------------------
-	// Start WebUI HTTP adapter (if enabled)
-	// --------------------
-	if cfg.WebUI.Enabled {
-		srv := webui.NewServer(cfg.WebUI.Listen, rt)
+	if startWebUI {
+		srv := webui.NewServer(webuiListen, rt)
 		go func() {
 			if err := srv.ListenAndServe(); err != nil {
 				log.Printf("aegis: webui: %v", err)
 			}
 		}()
-		log.Printf("aegis: webui adapter starting on %s", cfg.WebUI.Listen)
+		log.Printf("aegis: webui adapter starting on %s", webuiListen)
 	}
 
 	log.Println("aegis: running — press Ctrl+C to stop")
