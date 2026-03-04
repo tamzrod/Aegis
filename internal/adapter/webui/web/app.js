@@ -13,10 +13,6 @@ function deepCopy(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
-function configsEqual(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
 function getSelectedDevice() {
   if (!workingConfig || !selectedDeviceKey) return null;
   return workingConfig.devices.find(d => d.key === selectedDeviceKey) || null;
@@ -25,20 +21,6 @@ function getSelectedDevice() {
 function getSelectedDeviceIndex() {
   if (!workingConfig || !selectedDeviceKey) return -1;
   return workingConfig.devices.findIndex(d => d.key === selectedDeviceKey);
-}
-
-// ---------- pending-change banner ----------
-function setPendingState(isPending) {
-  const banner = document.getElementById('pending-banner');
-  if (isPending) {
-    banner.classList.remove('hidden');
-  } else {
-    banner.classList.add('hidden');
-  }
-}
-
-function checkPending() {
-  setPendingState(!configsEqual(originalConfig, workingConfig));
 }
 
 // ---------- toast ----------
@@ -137,7 +119,6 @@ function renderSourceEdit(device) {
     if (workingConfig.devices[idx].source.device_name) {
       workingConfig.devices[idx].display_name = workingConfig.devices[idx].source.device_name;
     }
-    checkPending();
     renderDeviceList();
     renderSourceView(workingConfig.devices[idx]);
   });
@@ -254,7 +235,6 @@ function renderTargetEdit(device) {
       status_slot:    parseInt(inputs['status_slot'].value,    10) || 0,
       mode:           inputs['mode'].value,
     };
-    checkPending();
     renderTargetView(workingConfig.devices[idx]);
   });
 
@@ -275,7 +255,6 @@ function renderReadsList(device, editIndex) {
     if (idx < 0) return;
     workingConfig.devices[idx].reads = workingConfig.devices[idx].reads || [];
     workingConfig.devices[idx].reads.push({ fc: 3, address: 0, quantity: 1, interval_ms: 1000 });
-    checkPending();
     renderReadsList(workingConfig.devices[idx], workingConfig.devices[idx].reads.length - 1);
   });
   actEl.appendChild(btnAdd);
@@ -337,7 +316,6 @@ function renderReadsList(device, editIndex) {
           quantity:    parseInt(inp['quantity'].value,    10) || 1,
           interval_ms: parseInt(inp['interval_ms'].value, 10) || 1000,
         };
-        checkPending();
         renderReadsList(workingConfig.devices[devIdx]);
       });
 
@@ -377,7 +355,6 @@ function renderReadsList(device, editIndex) {
         const devIdx = getSelectedDeviceIndex();
         if (devIdx < 0) return;
         workingConfig.devices[devIdx].reads.splice(i, 1);
-        checkPending();
         renderReadsList(workingConfig.devices[devIdx]);
       });
     }
@@ -452,7 +429,6 @@ async function loadView() {
     originalConfig = await res.json();
     workingConfig  = deepCopy(originalConfig);
     renderAll();
-    setPendingState(false);
   } catch (e) {
     showToast('Load failed: ' + e.message);
   }
@@ -473,20 +449,26 @@ document.getElementById('btn-apply-config').addEventListener('click', async () =
       return;
     }
     originalConfig = deepCopy(workingConfig);
-    setPendingState(false);
     showToast('Configuration applied.');
   } catch (e) {
     showToast('Apply failed: ' + e.message);
   }
 });
 
-// ---------- Discard Changes ----------
+// ---------- Restart Runtime ----------
 
-document.getElementById('btn-discard').addEventListener('click', () => {
-  workingConfig = deepCopy(originalConfig);
-  renderAll();
-  setPendingState(false);
-  showToast('Changes discarded.');
+document.getElementById('btn-restart-runtime').addEventListener('click', async () => {
+  try {
+    const res = await fetch('/api/restart', { method: 'POST' });
+    if (!res.ok) {
+      showToast('Restart failed: HTTP ' + res.status);
+      return;
+    }
+    showToast('Runtime restarting…');
+    setTimeout(() => loadView(), 1500);
+  } catch (e) {
+    showToast('Restart failed: ' + e.message);
+  }
 });
 
 // ---------- Add Device ----------
@@ -508,7 +490,6 @@ document.getElementById('btn-add').addEventListener('click', () => {
   };
   workingConfig.devices.push(newDevice);
   selectedDeviceKey = key;
-  checkPending();
   renderDeviceList();
   renderDevice(newDevice);
   // Open source in edit mode immediately
@@ -526,7 +507,6 @@ document.getElementById('btn-delete').addEventListener('click', () => {
   if (idx < 0) return;
   workingConfig.devices.splice(idx, 1);
   selectedDeviceKey = null;
-  checkPending();
   renderAll();
 });
 
