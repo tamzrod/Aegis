@@ -10,13 +10,12 @@
 
   <header class="global-header">
     <span class="global-header__title">AEGIS CONTROL</span>
-    <div class="global-header__actions">
-      <button id="btn-apply-config" class="btn-primary">Apply Config</button>
-      <button id="btn-restart-runtime" class="btn-action">Restart Runtime</button>
-      <button id="btn-export-config" class="btn-action">Export Config</button>
-      <input type="file" id="input-import-file" accept=".yaml,.yml" style="display:none">
-      <button id="btn-import-config" class="btn-action">Import Config</button>
-      <button id="btn-logout" class="btn-action">Logout</button>
+    <div class="user-menu" id="user-menu">
+      <button class="user-menu__trigger" id="user-menu-trigger"><span id="user-menu-name">User</span> ▾</button>
+      <div class="user-menu__dropdown" id="user-menu-dropdown">
+        <button class="user-menu__item" id="user-menu-settings">Settings</button>
+        <button class="user-menu__item" id="user-menu-logout">Logout</button>
+      </div>
     </div>
   </header>
 
@@ -33,29 +32,53 @@
 
     <div class="right-panel">
 
-      <section class="section">
-        <div class="section-header">
-          <span class="section-label">Source</span>
-          <div id="src-actions" class="section-actions"></div>
+      <div class="runtime-controls">
+        <div class="section-title">System Controls</div>
+        <div class="section-divider"></div>
+        <div class="runtime-controls__buttons">
+          <div class="btn-group">
+            <button id="btn-apply-config" class="btn-primary">Apply Config</button>
+            <button id="btn-restart-runtime" class="btn-action">Restart Runtime</button>
+          </div>
+          <div class="btn-group-sep"></div>
+          <div class="btn-group">
+            <button id="btn-export-config" class="btn-action">Export Config</button>
+            <input type="file" id="input-import-file" accept=".yaml,.yml" style="display:none">
+            <button id="btn-import-config" class="btn-action">Import Config</button>
+          </div>
         </div>
-        <div id="source-content" class="section-body"></div>
-      </section>
+      </div>
 
-      <section class="section">
-        <div class="section-header">
-          <span class="section-label">Reads</span>
-          <div id="reads-actions" class="section-actions"></div>
-        </div>
-        <div id="reads-content" class="section-body"></div>
-      </section>
+      <div class="workspace-content">
 
-      <section class="section">
-        <div class="section-header">
-          <span class="section-label">Target</span>
-          <div id="tgt-actions" class="section-actions"></div>
+        <div class="workspace-section">
+          <div class="section-title-row">
+            <span class="section-title">Source</span>
+            <div id="src-actions" class="section-actions"></div>
+          </div>
+          <div class="section-divider"></div>
+          <div id="source-content" class="section-body"></div>
         </div>
-        <div id="target-content" class="section-body"></div>
-      </section>
+
+        <div class="workspace-section">
+          <div class="section-title-row">
+            <span class="section-title">Reads</span>
+            <div id="reads-actions" class="section-actions"></div>
+          </div>
+          <div class="section-divider"></div>
+          <div id="reads-content" class="section-body"></div>
+        </div>
+
+        <div class="workspace-section">
+          <div class="section-title-row">
+            <span class="section-title">Target</span>
+            <div id="tgt-actions" class="section-actions"></div>
+          </div>
+          <div class="section-divider"></div>
+          <div id="target-content" class="section-body"></div>
+        </div>
+
+      </div>
 
     </div>
   </div>

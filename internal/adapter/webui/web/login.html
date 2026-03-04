@@ -42,6 +42,7 @@
                 });
                 if (resp.ok) {
                     const body = await resp.json().catch(() => ({}));
+                    sessionStorage.setItem('aegis_username', username);
                     if (body.password_change_required) {
                         window.location.href = '/change-password';
                     } else {
