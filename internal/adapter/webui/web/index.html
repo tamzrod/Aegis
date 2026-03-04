@@ -16,7 +16,13 @@
       <button id="btn-export-config" class="btn-action">Export Config</button>
       <input type="file" id="input-import-file" accept=".yaml,.yml" style="display:none">
       <button id="btn-import-config" class="btn-action">Import Config</button>
-      <button id="btn-logout" class="btn-action">Logout</button>
+    </div>
+    <div class="user-menu" id="user-menu">
+      <button class="user-menu__trigger" id="user-menu-trigger"><span id="user-menu-name">User</span> ▾</button>
+      <div class="user-menu__dropdown" id="user-menu-dropdown">
+        <button class="user-menu__item" id="user-menu-settings">Settings</button>
+        <button class="user-menu__item" id="user-menu-logout">Logout</button>
+      </div>
     </div>
   </header>
 

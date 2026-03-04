@@ -676,13 +676,37 @@ const _statusPollId = setInterval(async () => {
   if (workingConfig) renderDeviceList();
 }, 5000);
 
-// ---------- Logout ----------
+// ---------- User menu ----------
+(function () {
+  const trigger  = document.getElementById('user-menu-trigger');
+  const dropdown = document.getElementById('user-menu-dropdown');
+  const nameEl   = document.getElementById('user-menu-name');
 
-document.getElementById('btn-logout').addEventListener('click', async () => {
-  try {
-    await fetch('/api/logout', { method: 'POST' });
-  } catch {
-    // ignore network errors — redirect regardless
+  const stored = sessionStorage.getItem('aegis_username');
+  if (stored && typeof stored === 'string' && stored.trim().length > 0) {
+    nameEl.textContent = stored.trim();
   }
-  window.location.href = '/login';
-});
+
+  trigger.addEventListener('click', function (e) {
+    e.stopPropagation();
+    dropdown.classList.toggle('open');
+  });
+
+  document.addEventListener('click', function () {
+    dropdown.classList.remove('open');
+  });
+
+  document.getElementById('user-menu-settings').addEventListener('click', function () {
+    dropdown.classList.remove('open');
+    window.location.href = '/settings';
+  });
+
+  document.getElementById('user-menu-logout').addEventListener('click', async function () {
+    try {
+      await fetch('/api/logout', { method: 'POST' });
+    } catch {
+      // ignore network errors — redirect regardless
+    }
+    window.location.href = '/login';
+  });
+}());
