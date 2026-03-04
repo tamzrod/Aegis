@@ -611,6 +611,153 @@ func TestHandleConnModeCWriteRejected(t *testing.T) {
 }
 
 // --------------------
+// Multi-unit routing tests (shared port, distinct unit IDs)
+// --------------------
+
+// buildMultiUnitRegistry builds an AuthorityRegistry that mirrors the two-device scenario:
+// two replicator units (new-device-1 and new-device-2) share port 11502 but have
+// different unit IDs (1 and 2 respectively).  Mode B is used for both.
+// This configuration validates that a shared-port registry does not overwrite entries,
+// ensuring 11502:1 routes independently from 11502:2.
+func buildMultiUnitRegistry(health BlockHealthReader) *AuthorityRegistry {
+	cfg := &config.Config{
+		Replicator: config.ReplicatorConfig{
+			Units: []config.UnitConfig{
+				{
+					ID:     "new-device-1",
+					Source: config.SourceConfig{Endpoint: "127.0.0.1:502", TimeoutMs: 1000},
+					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: config.TargetConfig{Port: 11502, UnitID: 1, Mode: config.TargetModeB},
+				},
+				{
+					ID:     "new-device-2",
+					Source: config.SourceConfig{Endpoint: "127.0.0.1:502", TimeoutMs: 1000},
+					Reads:  []config.ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: config.TargetConfig{Port: 11502, UnitID: 2, Mode: config.TargetModeB},
+				},
+			},
+		},
+	}
+	return BuildAuthorityRegistry(cfg, health)
+}
+
+// TestBuildAuthorityRegistryMultiUnitKeys verifies that BuildAuthorityRegistry creates
+// independent entries for (11502, 1) and (11502, 2) — confirming that a shared port
+// with distinct unit IDs does not cause one entry to overwrite the other.
+// Authority presence is verified via Enforce: mode B rejects writes (0x01) for
+// registered targets and passes writes through for unknown unit IDs.
+func TestBuildAuthorityRegistryMultiUnitKeys(t *testing.T) {
+	health := newMockHealth()
+	reg := buildMultiUnitRegistry(health)
+
+	// Both registered units should reject writes (mode B → exception 0x01).
+	for _, unitID := range []uint16{1, 2} {
+		pdu, rejected := reg.Enforce(11502, unitID, 6, 0, 1) // FC6 write
+		if !rejected {
+			t.Errorf("unit_id=%d: mode B should reject FC6 write; authority entry may be missing", unitID)
+			continue
+		}
+		if len(pdu) != 2 || pdu[0] != 0x06|0x80 || pdu[1] != 0x01 {
+			t.Errorf("unit_id=%d: expected exception 0x01, got %v", unitID, pdu)
+		}
+	}
+
+	// An unregistered unit ID should pass through (no authority entry → not rejected).
+	pdu, rejected := reg.Enforce(11502, 3, 6, 0, 1)
+	if rejected {
+		t.Errorf("unit_id=3: not registered, should pass through, got exception PDU: %v", pdu)
+	}
+}
+
+// TestMultiUnitRoutingSharedPort verifies end-to-end routing for two devices sharing
+// port 11502 but with different unit IDs.  FC3 reads on each unit should return
+// data from their independent memory surfaces without cross-contamination.
+func TestMultiUnitRoutingSharedPort(t *testing.T) {
+	// Build a store with two independent memory surfaces.
+	store := core.NewMemStore()
+	for _, unitID := range []uint16{1, 2} {
+		mem, err := core.NewMemory(core.MemoryLayouts{
+			HoldingRegs: &core.AreaLayout{Start: 0, Size: 10},
+		})
+		if err != nil {
+			t.Fatalf("NewMemory unit_id=%d: %v", unitID, err)
+		}
+		// Write a distinct sentinel value into each surface so responses are distinguishable.
+		sentinel := make([]byte, 2)
+		sentinel[0] = 0
+		sentinel[1] = byte(unitID * 10) // unit 1 → 10, unit 2 → 20
+		if err := mem.WriteRegs(core.AreaHoldingRegs, 0, 1, sentinel); err != nil {
+			t.Fatalf("WriteRegs unit_id=%d: %v", unitID, err)
+		}
+		if err := store.Add(core.MemoryID{Port: 11502, UnitID: unitID}, mem); err != nil {
+			t.Fatalf("store.Add unit_id=%d: %v", unitID, err)
+		}
+	}
+
+	health := newMockHealth()
+	health.setHealthy("new-device-1", 0)
+	health.setHealthy("new-device-2", 0)
+	registry := buildMultiUnitRegistry(health)
+
+	// sendAndReceiveUnit sends an FC3 read to the given unitID on port 11502 and
+	// returns the response PDU.
+	sendAndReceiveUnit := func(unitID byte) []byte {
+		t.Helper()
+		frame := make([]byte, 12)
+		binary.BigEndian.PutUint16(frame[0:2], 1)   // txID
+		binary.BigEndian.PutUint16(frame[2:4], 0)   // protoID
+		binary.BigEndian.PutUint16(frame[4:6], 6)   // length
+		frame[6] = unitID                            // unit ID under test
+		frame[7] = 3                                 // FC3
+		binary.BigEndian.PutUint16(frame[8:10], 0)  // address = 0
+		binary.BigEndian.PutUint16(frame[10:12], 1) // quantity = 1
+
+		srvRaw, cli := net.Pipe()
+		srv := &fakeConn{Conn: srvRaw, localAddr: &net.TCPAddr{Port: 11502}}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			HandleConn(srv, store, registry)
+		}()
+
+		if _, err := cli.Write(frame); err != nil {
+			t.Fatalf("write request unit_id=%d: %v", unitID, err)
+		}
+		mbap := make([]byte, 7)
+		if _, err := io.ReadFull(cli, mbap); err != nil {
+			t.Fatalf("read MBAP unit_id=%d: %v", unitID, err)
+		}
+		length := binary.BigEndian.Uint16(mbap[4:6])
+		pdu := make([]byte, int(length)-1)
+		if _, err := io.ReadFull(cli, pdu); err != nil {
+			t.Fatalf("read PDU unit_id=%d: %v", unitID, err)
+		}
+		cli.Close()
+		<-done
+		return pdu
+	}
+
+	// Unit 1 → expect successful FC3 response with sentinel value 10.
+	pdu1 := sendAndReceiveUnit(1)
+	if len(pdu1) == 0 || pdu1[0]&0x80 != 0 {
+		t.Fatalf("unit_id=1: expected data response, got exception PDU: %v", pdu1)
+	}
+	// FC3 response: pdu[0]=0x03, pdu[1]=byte count, pdu[2]=hi, pdu[3]=lo
+	if len(pdu1) < 4 || pdu1[3] != 10 {
+		t.Errorf("unit_id=1: expected sentinel value 10 in register, got PDU: %v", pdu1)
+	}
+
+	// Unit 2 → expect successful FC3 response with sentinel value 20.
+	pdu2 := sendAndReceiveUnit(2)
+	if len(pdu2) == 0 || pdu2[0]&0x80 != 0 {
+		t.Fatalf("unit_id=2: expected data response, got exception PDU: %v", pdu2)
+	}
+	if len(pdu2) < 4 || pdu2[3] != 20 {
+		t.Errorf("unit_id=2: expected sentinel value 20 in register, got PDU: %v", pdu2)
+	}
+}
+
+// --------------------
 // Helpers
 // --------------------
 
