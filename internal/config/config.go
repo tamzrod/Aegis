@@ -24,6 +24,21 @@ const (
 type Config struct {
 	// Replicator declares the upstream devices to poll and the in-process targets to write.
 	Replicator ReplicatorConfig `yaml:"replicator"`
+
+	// WebUI configures the embedded HTTP configuration editor.
+	// If absent or enabled=false, no HTTP listener is started.
+	WebUI WebUIConfig `yaml:"webui"`
+}
+
+// WebUIConfig configures the embedded HTTP configuration editor.
+type WebUIConfig struct {
+	// Enabled controls whether the WebUI HTTP listener is started.
+	// Default: false.
+	Enabled bool `yaml:"enabled"`
+
+	// Listen is the TCP address the WebUI listens on.
+	// Default: ":8080".
+	Listen string `yaml:"listen"`
 }
 
 // --------------------

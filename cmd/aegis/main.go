@@ -5,16 +5,13 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
-	"github.com/tamzrod/Aegis/internal/adapter"
+	"github.com/tamzrod/Aegis/internal/adapter/webui"
 	"github.com/tamzrod/Aegis/internal/config"
-	"github.com/tamzrod/Aegis/internal/engine"
 )
 
 func main() {
@@ -27,7 +24,12 @@ func main() {
 	// --------------------
 	// Load and validate config (fail fast on invalid config)
 	// --------------------
-	cfg, err := config.Load(cfgPath)
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		log.Fatalf("config load failed: %v", err)
+	}
+
+	cfg, err := config.LoadBytes(data)
 	if err != nil {
 		log.Fatalf("config load failed: %v", err)
 	}
@@ -39,74 +41,28 @@ func main() {
 	log.Println("aegis: config loaded and validated")
 
 	// --------------------
-	// Build the shared in-process memory store (derived from replicator config)
+	// Build initial runtime (memory store, engine, Modbus adapters)
 	// --------------------
-	store, err := config.BuildMemStore(cfg)
+	rt, err := BuildRuntime(cfg, data, cfgPath)
 	if err != nil {
-		log.Fatalf("aegis: memory store build failed: %v", err)
+		log.Fatalf("aegis: runtime build failed: %v", err)
 	}
 
-	// Collect unique listener ports derived from replicator targets.
-	seenPorts := make(map[uint16]struct{})
-	for _, u := range cfg.Replicator.Units {
-		seenPorts[u.Target.Port] = struct{}{}
-	}
-
-	log.Printf("aegis: memory store initialized (%d unique port(s))", len(seenPorts))
+	log.Println("aegis: runtime started")
 
 	// --------------------
-	// Build per-block health store
+	// Start WebUI server if enabled
 	// --------------------
-	healthStore := engine.NewBlockHealthStore()
-
-	// --------------------
-	// Build replication engine units
-	// --------------------
-	units, err := engine.Build(cfg, store)
-	if err != nil {
-		log.Fatalf("aegis: engine build failed: %v", err)
-	}
-
-	log.Printf("aegis: engine built (%d units)", len(units))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// --------------------
-	// Build authority registry and start Modbus TCP server adapters
-	// One adapter is started per unique target port derived from replicator config.
-	// --------------------
-	authority := adapter.BuildAuthorityRegistry(cfg, healthStore)
-	for port := range seenPorts {
-		listenAddr := fmt.Sprintf(":%d", port)
-		srv := adapter.NewServer(listenAddr, store, authority)
-		go func(listen string, s *adapter.Server) {
-			if err := s.ListenAndServe(); err != nil {
-				log.Fatalf("aegis: adapter (%s) failed: %v", listen, err)
+	if cfg.WebUI.Enabled {
+		wsrv := webui.NewServer(cfg.WebUI.Listen, rt)
+		go func() {
+			log.Printf("aegis: webui listening on %s", cfg.WebUI.Listen)
+			if err := wsrv.ListenAndServe(); err != nil {
+				log.Printf("aegis: webui stopped: %v", err)
 			}
-		}(listenAddr, srv)
+		}()
 	}
 
-	log.Println("aegis: server adapters started")
-
-	// --------------------
-	// Start replication engine poll loops
-	// --------------------
-	for _, u := range units {
-		out := make(chan engine.PollResult, 8)
-		w := u.Writer
-		p := u.Poller
-		unitID := p.UnitID()
-
-		// Orchestrator: consume poll results, write data, update per-block health and status.
-		// Scheduling, policy enforcement, state mutation, and data transformation are
-		// handled by runOrchestrator (see orchestrator.go, health.go, snapshot.go).
-		go runOrchestrator(ctx, unitID, p, w, healthStore, out)
-
-		go p.Run(ctx, out)
-	}
-
-	log.Println("aegis: replication engine started")
 	log.Println("aegis: running — press Ctrl+C to stop")
 
 	// --------------------
@@ -117,5 +73,5 @@ func main() {
 	<-quit
 
 	log.Println("aegis: shutting down")
-	cancel()
+	rt.Stop()
 }
