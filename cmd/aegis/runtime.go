@@ -201,7 +201,7 @@ func (r *RuntimeManager) rebuild(cfg *config.Config, yamlBytes []byte) error {
 	var newServers []*adapter.Server
 	for port := range seenPorts {
 		listenAddr := fmt.Sprintf(":%d", port)
-		srv := adapter.NewServer(listenAddr, store, authority)
+		srv := adapter.NewServer(listenAddr, store, authority, cfg.Debug.AdapterRouting)
 		newServers = append(newServers, srv)
 		go func(listen string, s *adapter.Server) {
 			if err := s.ListenAndServe(); err != nil && !errors.Is(err, net.ErrClosed) {

@@ -504,7 +504,7 @@ func sendAndReceive(t *testing.T, authority *AuthorityRegistry, store core.Store
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		HandleConn(srv, store, authority)
+		HandleConn(srv, store, authority, false)
 	}()
 
 	if _, err := cli.Write(reqFrame); err != nil {
@@ -717,7 +717,7 @@ func TestMultiUnitRoutingSharedPort(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			HandleConn(srv, store, registry)
+			HandleConn(srv, store, registry, false)
 		}()
 
 		if _, err := cli.Write(frame); err != nil {
@@ -815,7 +815,7 @@ func TestDebugIllegalDataAddressMultiUnit(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			HandleConn(srv, store, registry)
+			HandleConn(srv, store, registry, false)
 		}()
 
 		if _, err := cli.Write(frame); err != nil {
@@ -981,7 +981,7 @@ func TestReproMultiUnitFanout(t *testing.T) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			HandleConn(srv, store, registry)
+			HandleConn(srv, store, registry, false)
 		}()
 
 		if _, err := cli.Write(frame); err != nil {

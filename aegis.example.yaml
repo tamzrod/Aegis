@@ -52,3 +52,7 @@ replicator:
         # offsets:
         #   3: 0   # FC3 holding registers: no offset
         #   4: 0   # FC4 input registers: no offset
+
+# Optional debug flags (all default to false; omit section for normal operation).
+# debug:
+#   adapter_routing: false   # Set to true to enable verbose per-request routing logs.
