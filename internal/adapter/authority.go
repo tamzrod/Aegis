@@ -2,6 +2,7 @@
 package adapter
 
 import (
+	"log"
 	"sort"
 
 	"github.com/tamzrod/Aegis/internal/config"
@@ -96,6 +97,8 @@ func BuildAuthorityRegistry(cfg *config.Config, health BlockHealthReader) *Autho
 			blocks:         blocks,
 			boundingRanges: brs,
 		}
+
+		log.Printf("adapter: authority registered %d:%d → %s", key.port, key.unitID, u.ID)
 	}
 
 	return &AuthorityRegistry{
@@ -130,8 +133,11 @@ func (r *AuthorityRegistry) Enforce(port, unitID uint16, fc uint8, address, quan
 	entry, ok := r.targets[targetKey{port: port, unitID: unitID}]
 	if !ok {
 		// No registered target — allow through without authority enforcement.
+		log.Printf("adapter: ROUTING REQUEST port=%d unit=%d → no authority entry (pass-through)", port, unitID)
 		return nil, false
 	}
+
+	log.Printf("adapter: ROUTING REQUEST port=%d unit=%d → matched %s", port, unitID, entry.replicatorID)
 
 	if isWriteFC(fc) {
 		if entry.mode != config.TargetModeA {

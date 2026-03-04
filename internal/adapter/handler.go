@@ -52,8 +52,10 @@ func HandleConn(conn net.Conn, store core.Store, authority Enforcer) {
 		}
 
 		// Per-target authority enforcement: check before state sealing and dispatch.
+		addr, qty := extractAddressQuantity(req)
+		log.Printf("adapter: ROUTING REQUEST port=%d unit=%d fc=%d address=%d quantity=%d",
+			port, req.UnitID, req.FunctionCode, addr, qty)
 		if authority != nil {
-			addr, qty := extractAddressQuantity(req)
 			if pdu, rejected := authority.Enforce(port, uint16(req.UnitID), req.FunctionCode, addr, qty); rejected {
 				_, _ = conn.Write(BuildResponse(req, pdu))
 				continue
