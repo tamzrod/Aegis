@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aegis Device Configuration</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Aegis Device Configuration</h1>
+        </header>
+
+        <div class="layout">
+            <!-- LEFT PANEL: DEVICES -->
+            <div class="left-panel">
+                <h2>Devices</h2>
+                <div class="device-list" id="deviceList">
+                    <!-- Populated by JavaScript -->
+                </div>
+                <div class="button-group">
+                    <button class="btn btn-primary" id="addBtn" disabled title="Editing available in next phase">+ Add</button>
+                    <button class="btn btn-danger" id="deleteBtn" disabled title="Editing available in next phase">Delete</button>
+                </div>
+            </div>
+
+            <!-- RIGHT PANEL: CONFIGURATION DETAILS -->
+            <div class="right-panel">
+                <!-- SOURCE SECTION -->
+                <section class="config-section">
+                    <h3>Source</h3>
+                    <div class="config-content">
+                        <div class="config-row">
+                            <div class="config-field">
+                                <span class="label">Endpoint:</span>
+                                <span class="value" id="sourceEndpoint">-</span>
+                            </div>
+                            <div class="config-field">
+                                <span class="label">Timeout:</span>
+                                <span class="value" id="sourceTimeout">-</span>
+                            </div>
+                        </div>
+                        <div class="config-row">
+                            <div class="config-field">
+                                <span class="label">Unit ID:</span>
+                                <span class="value" id="sourceUnitId">-</span>
+                            </div>
+                            <div class="config-field">
+                                <span class="label">Device Name:</span>
+                                <span class="value" id="sourceDeviceName">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- READS SECTION -->
+                <section class="config-section">
+                    <h3>Reads</h3>
+                    <div class="config-content">
+                        <div id="readsList" class="reads-list">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div class="add-read-placeholder">+ Add Read</div>
+                    </div>
+                </section>
+
+                <!-- TARGET SECTION -->
+                <section class="config-section">
+                    <h3>Target</h3>
+                    <div class="config-content">
+                        <div class="config-row">
+                            <div class="config-field">
+                                <span class="label">Port:</span>
+                                <span class="value" id="targetPort">-</span>
+                            </div>
+                            <div class="config-field">
+                                <span class="label">Unit ID:</span>
+                                <span class="value" id="targetUnitId">-</span>
+                            </div>
+                            <div class="config-field">
+                                <span class="label">Status Unit ID:</span>
+                                <span class="value" id="targetStatusUnitId">-</span>
+                            </div>
+                        </div>
+                        <div class="config-row">
+                            <div class="config-field">
+                                <span class="label">Status Slot:</span>
+                                <span class="value" id="targetStatusSlot">-</span>
+                            </div>
+                            <div class="config-field">
+                                <span class="label">Mode:</span>
+                                <span class="value" id="targetMode">-</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js"></script>
+</body>
+</html>

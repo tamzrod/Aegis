@@ -8,7 +8,9 @@ package webui
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
+	"io/fs"
 	"log"
 	"net"
 	"net/http"
@@ -16,6 +18,9 @@ import (
 
 	"github.com/tamzrod/Aegis/internal/view"
 )
+
+//go:embed web
+var webFiles embed.FS
 
 // Server is a read-only HTTP server adapter.
 type Server struct {
@@ -37,10 +42,7 @@ func NewServer(listen string, rv view.RuntimeView, cv view.ConfigView) *Server {
 // Start binds the listener and serves requests until ctx is cancelled.
 // Call as go srv.Start(ctx) to avoid blocking the caller.
 func (s *Server) Start(ctx context.Context) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", s.HandleHealthz)
-	mux.HandleFunc("/status", s.HandleStatus)
-	mux.HandleFunc("/config", s.HandleConfig)
+	mux := s.NewMux()
 
 	ln, err := net.Listen("tcp", s.listen)
 	if err != nil {
@@ -61,6 +63,22 @@ func (s *Server) Start(ctx context.Context) {
 	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Printf("webui: http server error: %v", err)
 	}
+}
+
+// NewMux builds and returns the HTTP request multiplexer for the server.
+func (s *Server) NewMux() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", s.HandleHealthz)
+	mux.HandleFunc("/status", s.HandleStatus)
+	mux.HandleFunc("/config", s.HandleConfig)
+
+	staticFS, err := fs.Sub(webFiles, "web")
+	if err != nil {
+		log.Printf("webui: failed to set up static file server, WebUI will not be available: %v", err)
+		return mux
+	}
+	mux.Handle("/", http.FileServer(http.FS(staticFS)))
+	return mux
 }
 
 // HandleHealthz returns a plain-text liveness response.

@@ -1,0 +1,218 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    background-color: #ffffff;
+    color: #111;
+}
+
+.container {
+    width: 100%;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px;
+}
+
+header {
+    margin-bottom: 40px;
+}
+
+header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    color: #111;
+}
+
+.layout {
+    display: flex;
+    gap: 20px;
+}
+
+/* LEFT PANEL */
+.left-panel {
+    width: 300px;
+    background-color: #ffffff;
+    border: 2px solid #111;
+    border-radius: 16px;
+    padding: 30px;
+    display: flex;
+    flex-direction: column;
+}
+
+.left-panel h2 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 25px;
+    color: #111;
+}
+
+.device-list {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.device-item {
+    padding: 15px;
+    background-color: #f5f5f5;
+    border: 1.2px solid #111;
+    border-radius: 10px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s ease;
+}
+
+.device-item:hover {
+    background-color: #efefef;
+}
+
+.device-item.selected {
+    background-color: #e8f2ff;
+    border: 1.5px solid #111;
+    font-weight: 600;
+}
+
+.button-group {
+    display: flex;
+    gap: 10px;
+    justify-content: space-between;
+}
+
+.btn {
+    flex: 1;
+    padding: 10px;
+    border: 1.5px solid #111;
+    border-radius: 8px;
+    background-color: #ffffff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn:not(:disabled):hover {
+    background-color: #f0f0f0;
+}
+
+.btn-primary {
+    color: #111;
+}
+
+.btn-danger {
+    color: #d32f2f;
+}
+
+/* RIGHT PANEL */
+.right-panel {
+    flex: 1;
+    background-color: #ffffff;
+    border: 2px solid #111;
+    border-radius: 16px;
+    padding: 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+}
+
+.config-section {
+    background-color: #ffffff;
+    border: 2px solid #111;
+    border-radius: 16px;
+    padding: 20px;
+}
+
+.config-section h3 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 20px;
+    color: #111;
+}
+
+.config-content {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.config-row {
+    display: flex;
+    gap: 30px;
+    flex-wrap: wrap;
+}
+
+.config-field {
+    flex: 1;
+    min-width: 200px;
+    display: flex;
+    gap: 8px;
+}
+
+.config-field .label {
+    font-weight: 600;
+    color: #111;
+    min-width: 140px;
+}
+
+.config-field .value {
+    color: #555;
+    font-size: 13px;
+}
+
+.reads-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.read-item {
+    padding: 12px;
+    background-color: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: monospace;
+    color: #333;
+}
+
+.add-read-placeholder {
+    font-size: 12px;
+    color: #999;
+    margin-top: 10px;
+    font-style: italic;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .layout {
+        flex-direction: column;
+    }
+
+    .left-panel {
+        width: 100%;
+    }
+
+    .config-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .config-field {
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .config-field .label {
+        min-width: auto;
+    }
+}
