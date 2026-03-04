@@ -1011,3 +1011,198 @@ func TestFormAuthEmptyConfigRedirects(t *testing.T) {
 		t.Fatalf("want 302 (always redirect), got %d", rec.Code)
 	}
 }
+
+// mockPasswordUpdater implements PasswordUpdater for testing.
+type mockPasswordUpdater struct {
+	mockManager
+	updateErr      error
+	updatedHash    string
+}
+
+func (m *mockPasswordUpdater) UpdatePasswordHash(hash string) error {
+	if m.updateErr != nil {
+		return m.updateErr
+	}
+	m.updatedHash = hash
+	return nil
+}
+
+// newTestServerWithDefaultPassword creates a test server in DEFAULT MODE
+// (DefaultPassword=true) and returns both the handler and the session cookie
+// obtained by logging in with admin/admin.
+func newTestServerWithDefaultPassword() (http.Handler, string) {
+	mgr := &mockPasswordUpdater{}
+	s := NewServer(":0", mgr, config.AuthConfig{
+		Username:        "admin",
+		PasswordHash:    adminHashForTest,
+		DefaultPassword: true,
+	})
+
+	loginBody := `{"username":"admin","password":"admin"}`
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(loginBody))
+	loginRec := httptest.NewRecorder()
+	s.srv.Handler.ServeHTTP(loginRec, loginReq)
+
+	var sessionCookie string
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			sessionCookie = c.Value
+			break
+		}
+	}
+	return s.srv.Handler, sessionCookie
+}
+
+// TestLoginDefaultModeReturnsPasswordChangeRequired verifies that POST /api/login
+// with DefaultPassword=true returns password_change_required=true in the response.
+func TestLoginDefaultModeReturnsPasswordChangeRequired(t *testing.T) {
+	mgr := &mockPasswordUpdater{}
+	// Manually set DefaultPassword on the server's handler via NewServer.
+	s := NewServer(":0", mgr, config.AuthConfig{
+		Username:        "admin",
+		PasswordHash:    adminHashForTest,
+		DefaultPassword: true,
+	})
+	handler := s.srv.Handler
+
+	body := `{"username":"admin","password":"admin"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Errorf("want status=ok, got %v", resp["status"])
+	}
+	if resp["password_change_required"] != true {
+		t.Errorf("want password_change_required=true, got %v", resp["password_change_required"])
+	}
+}
+
+// TestLoginNormalModeDoesNotRequirePasswordChange verifies that POST /api/login
+// with DefaultPassword=false does not return password_change_required.
+func TestLoginNormalModeDoesNotRequirePasswordChange(t *testing.T) {
+	mgr := &mockManager{}
+	handler := newTestServerWithAuth(mgr, "admin", adminHashForTest)
+
+	body := `{"username":"admin","password":"admin"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["password_change_required"] == true {
+		t.Errorf("want password_change_required absent or false, got true")
+	}
+}
+
+// TestPasswordChangeRequiredSessionRedirects verifies that a session with
+// passwordChangeRequired=true is redirected to /change-password when accessing
+// other protected routes.
+func TestPasswordChangeRequiredSessionRedirects(t *testing.T) {
+	h, sessionCookie := newTestServerWithDefaultPassword()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("want 302, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/change-password" {
+		t.Errorf("want Location: /change-password, got %q", loc)
+	}
+}
+
+// TestPasswordChangeRequiredSessionAllowsChangePasswordRoute verifies that a
+// session with passwordChangeRequired=true can access /change-password.
+func TestPasswordChangeRequiredSessionAllowsChangePasswordRoute(t *testing.T) {
+	h, sessionCookie := newTestServerWithDefaultPassword()
+
+	req := httptest.NewRequest(http.MethodGet, "/change-password", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	// Should not redirect; change-password page is served (200).
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d (Location: %s)", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// TestHandleChangePasswordSuccess verifies POST /api/change-password succeeds
+// and clears the password-change-required session flag.
+func TestHandleChangePasswordSuccess(t *testing.T) {
+	h, sessionCookie := newTestServerWithDefaultPassword()
+
+	body := `{"new_password":"newpass123","confirm_password":"newpass123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/change-password", strings.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != "ok" {
+		t.Errorf("want status=ok, got %q", resp["status"])
+	}
+
+	// After password change, the session should allow access to protected routes.
+	req2 := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
+	req2.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("want 200 after password change, got %d", rec2.Code)
+	}
+}
+
+// TestHandleChangePasswordMismatch verifies POST /api/change-password returns 400
+// when passwords do not match.
+func TestHandleChangePasswordMismatch(t *testing.T) {
+	h, sessionCookie := newTestServerWithDefaultPassword()
+
+	body := `{"new_password":"newpass123","confirm_password":"different"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/change-password", strings.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+// TestHandleChangePasswordEmptyPassword verifies POST /api/change-password returns 400
+// when the new password is empty.
+func TestHandleChangePasswordEmptyPassword(t *testing.T) {
+	h, sessionCookie := newTestServerWithDefaultPassword()
+
+	body := `{"new_password":"","confirm_password":""}`
+	req := httptest.NewRequest(http.MethodPost, "/api/change-password", strings.NewReader(body))
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: sessionCookie})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}

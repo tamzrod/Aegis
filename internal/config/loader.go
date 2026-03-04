@@ -67,6 +67,9 @@ func LoadBytes(data []byte) (*Config, error) {
 		cfg.Auth.Username = "admin"
 	}
 	if cfg.Auth.PasswordHash == "" {
+		// No password_hash in config: system is in DEFAULT MODE.
+		// Mark the auth config so the WebUI can force a password change on first login.
+		cfg.Auth.DefaultPassword = true
 		cfg.Auth.PasswordHash = "$2a$10$7NNFFDnya2hrHSrENsVU2exQ1dDJD/eURJ02rM2mHV716gFJh5eUi"
 	}
 
