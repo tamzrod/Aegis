@@ -5,77 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aegis Login</title>
     <link rel="stylesheet" href="/style.css">
-    <style>
-        .login-container {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-        }
-        .login-box {
-            background: #fff;
-            border: 1px solid #ddd;
-            border-radius: 6px;
-            padding: 2rem 2.5rem;
-            width: 320px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        }
-        .login-box h1 {
-            margin: 0 0 1.5rem;
-            font-size: 1.4rem;
-            text-align: center;
-        }
-        .login-field {
-            margin-bottom: 1rem;
-        }
-        .login-field label {
-            display: block;
-            margin-bottom: 0.3rem;
-            font-size: 0.9rem;
-            font-weight: 600;
-        }
-        .login-field input {
-            width: 100%;
-            padding: 0.5rem 0.6rem;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-size: 0.95rem;
-            box-sizing: border-box;
-        }
-        .login-btn {
-            width: 100%;
-            padding: 0.55rem;
-            margin-top: 0.5rem;
-            background: #1a73e8;
-            color: #fff;
-            border: none;
-            border-radius: 4px;
-            font-size: 1rem;
-            cursor: pointer;
-        }
-        .login-btn:hover { background: #1558b0; }
-        .login-error {
-            display: none;
-            color: #c0392b;
-            font-size: 0.88rem;
-            margin-top: 0.8rem;
-            text-align: center;
-        }
-    </style>
 </head>
 <body>
-    <div class="login-container">
-        <div class="login-box">
-            <h1>Aegis</h1>
+    <div class="login-wrap">
+        <div class="login-card">
+            <div class="login-card__title">Aegis</div>
             <div class="login-field">
                 <label for="username">Username</label>
-                <input type="text" id="username" name="username" autocomplete="username" autofocus>
+                <input class="field-input" type="text" id="username" name="username" autocomplete="username" autofocus>
             </div>
             <div class="login-field">
                 <label for="password">Password</label>
-                <input type="password" id="password" name="password" autocomplete="current-password">
+                <input class="field-input" type="password" id="password" name="password" autocomplete="current-password">
             </div>
-            <button class="login-btn" id="loginBtn">Login</button>
+            <button class="btn-primary login-btn" id="loginBtn">Login</button>
             <div class="login-error" id="loginError">Invalid username or password.</div>
         </div>
     </div>

@@ -81,10 +81,17 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 		h.dp = dp
 	}
 
-	// Unprotected routes: login page and login API endpoint.
+	// Unprotected routes: login page, login API endpoint, and shared static assets.
+	// Static assets must be public so the login page can load its CSS/JS.
 	webFS, _ := fs.Sub(webFiles, "web")
 	mux.HandleFunc("/login", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, webFS, "login.html")
+	})
+	mux.HandleFunc("/style.css", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "style.css")
+	})
+	mux.HandleFunc("/app.js", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "app.js")
 	})
 	mux.HandleFunc("/api/login", h.handleLogin)
 
