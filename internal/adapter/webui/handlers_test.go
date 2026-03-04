@@ -36,9 +36,19 @@ func (m *mockManager) Rebuild(_ *config.Config, _ []byte) error { return m.rebui
 func (m *mockManager) StartRuntime() error                      { return m.startRuntimeErr }
 func (m *mockManager) StopRuntime() error                       { return m.stopRuntimeErr }
 
+// adminHashForTest is the bcrypt hash of "admin" at MinCost, used by newTestServer.
+// MinCost keeps unit tests fast while still exercising the real bcrypt path.
+const adminHashForTest = "$2a$04$2Nnq62aDGVdv7IthZa8kUOYL.YoLVbmIiRvfoJg9lWjp0i49OC2.q"
+
 func newTestServer(mgr Manager) http.Handler {
-	s := NewServer(":0", mgr, config.AuthConfig{})
-	return s.srv.Handler
+	s := NewServer(":0", mgr, config.AuthConfig{Username: "admin", PasswordHash: adminHashForTest})
+	// Wrap: automatically inject admin credentials on every request so that handler
+	// tests focus on handler logic rather than auth mechanics.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r2 := r.Clone(r.Context())
+		r2.SetBasicAuth("admin", "admin")
+		s.srv.Handler.ServeHTTP(w, r2)
+	})
 }
 
 // TestGetConfigRaw verifies that GET /api/config/raw returns the active YAML.
@@ -926,19 +936,19 @@ func TestBasicAuthValidCredentials(t *testing.T) {
 	}
 }
 
-// TestBasicAuthDisabledWhenEmpty verifies that auth is not enforced when username or
-// password_hash is empty (auth disabled by default).
-func TestBasicAuthDisabledWhenEmpty(t *testing.T) {
+// TestBasicAuthEmptyConfigRejectsAll verifies that even when AuthConfig has empty fields,
+// requests without credentials are still rejected (auth is always enforced).
+func TestBasicAuthEmptyConfigRejectsAll(t *testing.T) {
 	mgr := &mockManager{yaml: []byte("replicator: {}")}
 
-	// No username/password_hash set — auth should be disabled.
+	// Empty AuthConfig: no valid bcrypt hash → every request must be rejected.
 	h := newTestServerWithAuth(mgr, "", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config/raw", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("want 200 (auth disabled), got %d", rec.Code)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401 (auth always enforced), got %d", rec.Code)
 	}
 }

@@ -3,6 +3,8 @@ package config
 
 import (
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestLoadBytesDefaultStatusUnitID(t *testing.T) {
@@ -186,3 +188,72 @@ webui:
 		t.Errorf("WebUI.Listen: want %q, got %q", ":9090", cfg.WebUI.Listen)
 	}
 }
+
+// TestLoadBytesAuthDefaults verifies that when the auth section is absent, LoadBytes
+// defaults to username=admin and a bcrypt hash of "admin".
+func TestLoadBytesAuthDefaults(t *testing.T) {
+	configYAML := []byte(`
+replicator:
+  units:
+    - id: plc1
+      source:
+        endpoint: "192.168.1.1:502"
+        timeout_ms: 1000
+      reads:
+        - fc: 3
+          address: 0
+          quantity: 10
+          interval_ms: 1000
+      target:
+        port: 502
+        unit_id: 1
+`)
+	cfg, err := LoadBytes(configYAML)
+	if err != nil {
+		t.Fatalf("LoadBytes: unexpected error: %v", err)
+	}
+	if cfg.Auth.Username != "admin" {
+		t.Errorf("Auth.Username: want %q, got %q", "admin", cfg.Auth.Username)
+	}
+	if cfg.Auth.PasswordHash == "" {
+		t.Fatal("Auth.PasswordHash: want non-empty bcrypt hash, got empty string")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(cfg.Auth.PasswordHash), []byte("admin")); err != nil {
+		t.Errorf("Auth.PasswordHash: default hash does not match password %q: %v", "admin", err)
+	}
+}
+
+// TestLoadBytesAuthExplicitPreserved verifies that when the auth section is explicitly
+// set, those values are not overridden by defaults.
+func TestLoadBytesAuthExplicitPreserved(t *testing.T) {
+	configYAML := []byte(`
+replicator:
+  units:
+    - id: plc1
+      source:
+        endpoint: "192.168.1.1:502"
+        timeout_ms: 1000
+      reads:
+        - fc: 3
+          address: 0
+          quantity: 10
+          interval_ms: 1000
+      target:
+        port: 502
+        unit_id: 1
+auth:
+  username: myuser
+  password_hash: "$2a$04$somehashvalue"
+`)
+	cfg, err := LoadBytes(configYAML)
+	if err != nil {
+		t.Fatalf("LoadBytes: unexpected error: %v", err)
+	}
+	if cfg.Auth.Username != "myuser" {
+		t.Errorf("Auth.Username: want %q, got %q", "myuser", cfg.Auth.Username)
+	}
+	if cfg.Auth.PasswordHash != "$2a$04$somehashvalue" {
+		t.Errorf("Auth.PasswordHash: want %q, got %q", "$2a$04$somehashvalue", cfg.Auth.PasswordHash)
+	}
+}
+

@@ -60,5 +60,15 @@ func LoadBytes(data []byte) (*Config, error) {
 		cfg.WebUI.Listen = ":8080"
 	}
 
+	// Apply auth defaults: username=admin, password=admin (bcrypt hash).
+	// Authentication is always enforced; these defaults ensure credentials are always
+	// set so that a freshly created config requires explicit login via admin/admin.
+	if cfg.Auth.Username == "" {
+		cfg.Auth.Username = "admin"
+	}
+	if cfg.Auth.PasswordHash == "" {
+		cfg.Auth.PasswordHash = "$2a$10$7NNFFDnya2hrHSrENsVU2exQ1dDJD/eURJ02rM2mHV716gFJh5eUi"
+	}
+
 	return &cfg, nil
 }
