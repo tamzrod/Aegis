@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/tamzrod/Aegis/internal/runtime"
 )
 
 // maxConfigBodyBytes is the maximum accepted request body size for config endpoints.
@@ -147,11 +149,7 @@ func (h *handlers) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
 		s := h.sp.RuntimeStatus()
 		state = s
 	} else {
-		state = struct {
-			Running bool   `json:"running"`
-			State   string `json:"state"`
-			Error   string `json:"error,omitempty"`
-		}{}
+		state = runtime.RuntimeState{}
 	}
 
 	w.Header().Set("Content-Type", "application/json")

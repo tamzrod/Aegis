@@ -70,7 +70,7 @@ function updateRuntimeUI(status) {
     const stopBtn = document.getElementById('stopBtn');
     const restartBtn = document.getElementById('restartBtn');
 
-    // Update status dot colour
+    // Update status dot color
     dot.className = 'status-dot';
     switch (state) {
         case 'RUNNING':

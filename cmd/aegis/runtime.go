@@ -47,10 +47,12 @@ type RuntimeManager struct {
 // NewRuntimeManager creates a hollow RuntimeManager that tracks cfgPath and
 // runtime state but has no engine running yet.  Call Start after config validation.
 func NewRuntimeManager(cfgPath string, processCtx context.Context) *RuntimeManager {
-	return &RuntimeManager{
+	r := &RuntimeManager{
 		configPath: cfgPath,
 		processCtx: processCtx,
 	}
+	r.state.SetStopped()
+	return r
 }
 
 // SetError marks the runtime as not running and records a startup error.
@@ -109,7 +111,7 @@ func (r *RuntimeManager) StartRuntime() error {
 	defer r.mu.Unlock()
 
 	st := r.state.GetState()
-	if st != runtimepkg.StateStopped && st != "" {
+	if st != runtimepkg.StateStopped {
 		return fmt.Errorf("cannot start: runtime state is %s", st)
 	}
 	yamlBytes := r.activeConfigYAML
@@ -316,15 +318,15 @@ func (r *RuntimeManager) rebuild(cfg *config.Config, yamlBytes []byte) error {
 				b.ln.Close()
 			}
 			runtimeCancel()
-			errMsg := fmt.Errorf("adapter (%s) failed to bind: %w", addr, bindErr)
+			bindErr = fmt.Errorf("adapter (%s) failed to bind: %w", addr, bindErr)
 			listenerStatuses = append(listenerStatuses, runtimepkg.ListenerStatus{
 				Port:   port,
 				Status: "error",
 				Error:  bindErr.Error(),
 			})
 			r.listenerStatuses = listenerStatuses
-			r.state.SetError(errMsg)
-			return errMsg
+			r.state.SetError(bindErr)
+			return bindErr
 		}
 		bound = append(bound, boundPort{port: port, ln: ln})
 		listenerStatuses = append(listenerStatuses, runtimepkg.ListenerStatus{
