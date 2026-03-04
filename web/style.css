@@ -21,10 +21,89 @@ header {
     margin-bottom: 40px;
 }
 
+.header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 8px;
+}
+
 header h1 {
     font-size: 22px;
     font-weight: 700;
     color: #111;
+}
+
+.runtime-controls {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.status-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #555;
+}
+
+.status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #aaa;
+    flex-shrink: 0;
+}
+
+.status-dot.status-running  { background-color: #22c55e; }
+.status-dot.status-starting { background-color: #f59e0b; }
+.status-dot.status-stopping { background-color: #f59e0b; }
+.status-dot.status-stopped  { background-color: #ef4444; }
+
+.runtime-buttons {
+    display: flex;
+    gap: 8px;
+}
+
+.error-bar {
+    background-color: #fef2f2;
+    border: 1px solid #fca5a5;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #b91c1c;
+    margin-top: 4px;
+}
+
+.btn-success {
+    color: #166534;
+    border-color: #166534;
+}
+
+.btn-success:not(:disabled):hover {
+    background-color: #dcfce7;
+}
+
+.btn-warning {
+    color: #92400e;
+    border-color: #92400e;
+}
+
+.btn-warning:not(:disabled):hover {
+    background-color: #fef3c7;
+}
+
+.btn-secondary {
+    color: #374151;
+    border-color: #6b7280;
+}
+
+.btn-secondary:not(:disabled):hover {
+    background-color: #f3f4f6;
 }
 
 .layout {

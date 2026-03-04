@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"os"
@@ -19,6 +20,15 @@ const defaultWebUIListen = ":8080"
 
 func main() {
 	// --------------------
+	// Process-level context: cancelled only on OS shutdown signal.
+	// The WebUI HTTP server does NOT use this context — it runs independently.
+	// The runtime engine derives runtimeCtx from this context so that OS
+	// shutdown also stops pollers and adapters.
+	// --------------------
+	processCtx, processCancel := context.WithCancel(context.Background())
+	defer processCancel()
+
+	// --------------------
 	// Determine config path (default: "config.yaml" in working directory)
 	// --------------------
 	cfgPath := defaultConfigPath
@@ -26,7 +36,7 @@ func main() {
 		cfgPath = os.Args[1]
 	}
 
-	rt := NewRuntimeManager(cfgPath)
+	rt := NewRuntimeManager(cfgPath, processCtx)
 
 	webuiListen := defaultWebUIListen
 	startWebUI := false
@@ -79,7 +89,8 @@ func main() {
 	}
 
 	// --------------------
-	// Start WebUI HTTP adapter
+	// Start WebUI HTTP adapter — started ONCE at process boot, never restarted.
+	// Runtime actions (Start/Stop/Restart) must not touch this server.
 	// --------------------
 	if startWebUI {
 		srv := webui.NewServer(webuiListen, rt)
@@ -101,5 +112,7 @@ func main() {
 
 	<-quit
 
+	// Cancel process context to stop all runtime goroutines cleanly.
+	processCancel()
 	log.Println("aegis: shutting down")
 }
