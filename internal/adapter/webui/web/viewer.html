@@ -81,6 +81,12 @@
       width: 160px;
     }
 
+    .viewer-controls__input--fc {
+      min-width: 220px;
+      flex: 0 0 220px;
+      white-space: nowrap;
+    }
+
     .viewer-controls__sep {
       width: 1px;
       height: 2rem;
@@ -386,7 +392,7 @@
 
       <div class="viewer-controls__group">
         <span class="viewer-controls__label">Function Code</span>
-        <select id="v-fc" class="viewer-controls__input viewer-controls__input--short">
+        <select id="v-fc" class="viewer-controls__input viewer-controls__input--fc">
           <option value="3">FC3 — Holding Registers</option>
           <option value="4">FC4 — Input Registers</option>
           <option value="1">FC1 — Coils</option>
