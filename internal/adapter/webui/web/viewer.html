@@ -71,6 +71,9 @@
 
     select.viewer-controls__input {
       cursor: pointer;
+      height: 36px;
+      border-radius: 6px;
+      padding: 4px 8px;
     }
 
     .viewer-controls__input--short {
@@ -83,7 +86,6 @@
 
     .viewer-controls__input--fc {
       min-width: 220px;
-      flex: 0 0 220px;
       white-space: nowrap;
     }
 
@@ -427,6 +429,23 @@
       background: #4a9eff;
       box-shadow: 0 0 4px #4a9eff88;
     }
+
+    /* ---- Consumed (sub-register) rows ---- */
+    .reg-table tbody tr.consumed-row {
+      cursor: default;
+      opacity: 0.45;
+    }
+
+    .reg-table tbody tr.consumed-row:hover {
+      background: transparent;
+    }
+
+    .consumed-label {
+      color: #666;
+      font-style: italic;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body class="viewer-page">
@@ -522,18 +541,29 @@
 
     // Supported data types for register interpretation.
     const DATA_TYPES = [
-      { value: '',        label: '\u2014' },
-      { value: 'uint16',  label: 'uint16'  },
-      { value: 'int16',   label: 'int16'   },
-      { value: 'uint32',  label: 'uint32'  },
-      { value: 'int32',   label: 'int32'   },
-      { value: 'float32', label: 'float32' },
+      { value: '',             label: '\u2014'      },
+      { value: 'uint16',       label: 'UINT16'      },
+      { value: 'int16',        label: 'INT16'       },
+      { value: 'uint32',       label: 'UINT32'      },
+      { value: 'int32',        label: 'INT32'       },
+      { value: 'float32',      label: 'FLOAT32'     },
+      { value: 'uint64',       label: 'UINT64'      },
+      { value: 'int64',        label: 'INT64'       },
+      { value: 'float64',      label: 'FLOAT64'     },
+      { value: 'timestamp32',  label: 'TIMESTAMP32' },
+      { value: 'timestamp64',  label: 'TIMESTAMP64' },
     ];
 
-    const WORD_ORDERS = [
-      { value: '',   label: '\u2014' },
+    // Word order options per width category.
+    const WORD_ORDERS_32 = [
       { value: 'AB', label: 'AB' },
       { value: 'BA', label: 'BA' },
+    ];
+    const WORD_ORDERS_64 = [
+      { value: 'ABCD', label: 'ABCD' },
+      { value: 'BADC', label: 'BADC' },
+      { value: 'CDAB', label: 'CDAB' },
+      { value: 'DCBA', label: 'DCBA' },
     ];
 
     // ---- DOM refs ----
@@ -719,6 +749,124 @@
         });
     }
 
+    // ---- Type category helpers ----
+    function typeIs32(type) {
+      return type === 'uint32' || type === 'int32' || type === 'float32' || type === 'timestamp32';
+    }
+    function typeIs64(type) {
+      return type === 'uint64' || type === 'int64' || type === 'float64' || type === 'timestamp64';
+    }
+    function typeRegCount(type) {
+      if (typeIs32(type)) return 2;
+      if (typeIs64(type)) return 4;
+      return 1;
+    }
+
+    // ---- Format a Date as YYYY-MM-DD HH:mm:ss (UTC) ----
+    function formatDateTime(d) {
+      if (isNaN(d.getTime())) return 'Invalid Date';
+      const pad = n => String(n).padStart(2, '0');
+      return d.getUTCFullYear() + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate())
+           + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds());
+    }
+
+    // ---- Build word-order <option> tags for the given type / current value ----
+    function buildWordOrderOptions(type, wo) {
+      if (typeIs64(type)) {
+        const valid = ['ABCD', 'BADC', 'CDAB', 'DCBA'];
+        const sel   = valid.includes(wo) ? wo : 'ABCD';
+        return WORD_ORDERS_64.map(w =>
+          '<option value="' + w.value + '"' + (w.value === sel ? ' selected' : '') + '>' + w.label + '</option>'
+        ).join('');
+      }
+      if (typeIs32(type)) {
+        const valid = ['AB', 'BA'];
+        const sel   = valid.includes(wo) ? wo : 'AB';
+        return WORD_ORDERS_32.map(w =>
+          '<option value="' + w.value + '"' + (w.value === sel ? ' selected' : '') + '>' + w.label + '</option>'
+        ).join('');
+      }
+      // 16-bit or none — disabled, single placeholder.
+      return '<option value="">\u2014</option>';
+    }
+
+    // ---- Build a DataView over 4 registers applying 64-bit word order ----
+    function make64BitDataView(v0, v1, v2, v3, wo) {
+      const order = (['ABCD', 'BADC', 'CDAB', 'DCBA'].includes(wo)) ? wo : 'ABCD';
+      let regs;
+      if (order === 'ABCD') regs = [v0, v1, v2, v3];
+      else if (order === 'BADC') regs = [v1, v0, v3, v2];
+      else if (order === 'CDAB') regs = [v2, v3, v0, v1];
+      else                       regs = [v3, v2, v1, v0]; // DCBA
+      const buf = new ArrayBuffer(8);
+      const dv  = new DataView(buf);
+      dv.setUint16(0, regs[0]);
+      dv.setUint16(2, regs[1]);
+      dv.setUint16(4, regs[2]);
+      dv.setUint16(6, regs[3]);
+      return dv;
+    }
+
+    // ---- Check that `count` registers starting at `address` are present and consecutive ----
+    function hasConsecutiveRegisters(idx, address, count) {
+      if (idx + count - 1 >= lastValues.length) return false;
+      for (let i = 1; i < count; i++) {
+        if (lastValues[idx + i].address !== address + i) return false;
+      }
+      return true;
+    }
+
+    // ---- Format a 32-bit value (as two 16-bit halves) to grouped binary ----
+    function reg32bin(hi, lo) {
+      const b = (hi * 0x10000 + lo).toString(2).padStart(32, '0');
+      return b.slice(0, 8) + '&nbsp;' + b.slice(8, 16) + '&nbsp;' + b.slice(16, 24) + '&nbsp;' + b.slice(24);
+    }
+
+    // ---- Return hex string for combined multi-register value (or null) ----
+    function getCombinedHex(address, type, wo) {
+      const idx = lastValues.findIndex(r => r.address === address);
+      if (idx < 0) return null;
+      const v0 = lastValues[idx].value;
+
+      if (typeIs32(type)) {
+        if (!hasConsecutiveRegisters(idx, address, 2)) return null;
+        const v1 = lastValues[idx + 1].value;
+        const combined = ((wo === 'BA') ? ((v1 << 16) | v0) : ((v0 << 16) | v1)) >>> 0;
+        return '0x' + combined.toString(16).toUpperCase().padStart(8, '0');
+      }
+      if (typeIs64(type)) {
+        if (!hasConsecutiveRegisters(idx, address, 4)) return null;
+        const v1 = lastValues[idx + 1].value, v2 = lastValues[idx + 2].value, v3 = lastValues[idx + 3].value;
+        const dv = make64BitDataView(v0, v1, v2, v3, wo || 'ABCD');
+        let hex = '0x';
+        for (let i = 0; i < 8; i++) hex += dv.getUint8(i).toString(16).toUpperCase().padStart(2, '0');
+        return hex;
+      }
+      return null;
+    }
+
+    // ---- Return binary string for combined multi-register value (or null) ----
+    function getCombinedBinary(address, type, wo) {
+      const idx = lastValues.findIndex(r => r.address === address);
+      if (idx < 0) return null;
+      const v0 = lastValues[idx].value;
+
+      if (typeIs32(type)) {
+        if (!hasConsecutiveRegisters(idx, address, 2)) return null;
+        const v1 = lastValues[idx + 1].value;
+        const combined = ((wo === 'BA') ? ((v1 << 16) | v0) : ((v0 << 16) | v1)) >>> 0;
+        const b = combined.toString(2).padStart(32, '0');
+        return b.slice(0, 8) + '&nbsp;' + b.slice(8, 16) + '&nbsp;' + b.slice(16, 24) + '&nbsp;' + b.slice(24);
+      }
+      if (typeIs64(type)) {
+        if (!hasConsecutiveRegisters(idx, address, 4)) return null;
+        const v1 = lastValues[idx + 1].value, v2 = lastValues[idx + 2].value, v3 = lastValues[idx + 3].value;
+        const dv = make64BitDataView(v0, v1, v2, v3, wo || 'ABCD');
+        return reg32bin(dv.getUint16(0), dv.getUint16(2)) + '<br>' + reg32bin(dv.getUint16(4), dv.getUint16(6));
+      }
+      return null;
+    }
+
     // ---- Compute parsed value from raw register value(s) ----
     // Returns a string, or null when no type is configured.
     function parsedValue(address, type, wordOrder) {
@@ -732,10 +880,33 @@
       if (type === 'int16')  return String(v0 >= 0x8000 ? v0 - 0x10000 : v0);
 
       // 32-bit types need the next consecutive register.
-      if (idx + 1 >= lastValues.length) return '\u2014';
-      if (lastValues[idx + 1].address !== address + 1) return '\u2014'; // must be consecutive
+      if (!hasConsecutiveRegisters(idx, address, 2)) return '\u2014';
       const v1 = lastValues[idx + 1].value;
 
+      if (typeIs64(type)) {
+        // 64-bit types need 4 consecutive registers.
+        if (!hasConsecutiveRegisters(idx, address, 4)) return '\u2014';
+        const v2 = lastValues[idx + 2].value;
+        const v3 = lastValues[idx + 3].value;
+        const dv = make64BitDataView(v0, v1, v2, v3, wordOrder || 'ABCD');
+
+        if (type === 'float64') {
+          const f = dv.getFloat64(0);
+          return isFinite(f) ? f.toString() : String(f);
+        }
+        // Use BigInt for exact 64-bit integer arithmetic.
+        const raw64 = BigInt(dv.getUint32(0)) * 0x100000000n + BigInt(dv.getUint32(4));
+        if (type === 'uint64') return raw64.toString();
+        if (type === 'int64') {
+          return (raw64 >= 0x8000000000000000n ? raw64 - 0x10000000000000000n : raw64).toString();
+        }
+        if (type === 'timestamp64') {
+          return formatDateTime(new Date(Number(raw64)));
+        }
+        return null;
+      }
+
+      // 32-bit types.
       const wo       = wordOrder || 'AB';
       const combined = (wo === 'AB')
         ? ((v0 << 16) | v1) >>> 0
@@ -750,6 +921,9 @@
         // 7 significant digits matches IEEE 754 single-precision display fidelity.
         return isFinite(f) ? parseFloat(f.toPrecision(7)).toString() : String(f);
       }
+      if (type === 'timestamp32') {
+        return formatDateTime(new Date(combined * 1000));
+      }
       return null;
     }
 
@@ -762,7 +936,7 @@
 
       const isBit    = (fc === 1 || fc === 2);
       const device   = selDevice.value;
-      const colspanBI = isBit ? 3 : 7;
+      const colspanBI = isBit ? 3 : 8;
 
       let thead = '<thead><tr>'
         + '<th>Address</th>'
@@ -775,15 +949,51 @@
       thead += '</tr></thead>';
 
       let rows = '';
+      const consumedBy = new Map(); // address -> ownerAddress
       lastValues.forEach(({ address, value }) => {
+        const rawHex = '0x' + value.toString(16).toUpperCase().padStart(4, '0');
+        const rawBin = formatBinary(value);
+
+        if (consumedBy.has(address)) {
+          // Render a dimmed, non-editable row showing which register owns this one.
+          const ownerAddr = consumedBy.get(address);
+          rows += '<tr class="consumed-row" data-address="' + address + '">';
+          rows += '<td class="col-address">' + address + '</td>';
+          rows += '<td class="col-name"><span class="consumed-label">\u2014</span></td>';
+          if (!isBit) {
+            rows += '<td class="col-type"><span class="consumed-label">used by ' + ownerAddr + '</span></td>';
+            rows += '<td class="col-wordorder"><span class="consumed-label">\u2014</span></td>';
+            rows += '<td class="col-parsed"><span style="color:#555">\u2014</span></td>';
+          }
+          rows += '<td class="col-decimal">' + value + '</td>';
+          if (!isBit) {
+            rows += '<td class="col-hex">' + rawHex + '</td>';
+            rows += '<td class="col-binary">' + rawBin + '</td>';
+          }
+          rows += '</tr>';
+          return;
+        }
+
         const isExpanded = (expandedRow === address);
-        const hexStr   = '0x' + value.toString(16).toUpperCase().padStart(4, '0');
-        const binStr   = formatBinary(value);
         const rowCls   = isExpanded ? 'selected' : '';
         const entry    = getEntry(device, fc, address);
         const name     = entry.name      || '';
         const type     = entry.type      || '';
         const wo       = entry.word_order || '';
+
+        // Mark subsequent registers as consumed so they render as "used by" rows.
+        const regCount = typeRegCount(type);
+        for (let i = 1; i < regCount; i++) {
+          consumedBy.set(address + i, address);
+        }
+
+        // Compute display values — use combined for multi-register types.
+        const is32 = typeIs32(type);
+        const is64 = typeIs64(type);
+        let hexStr = getCombinedHex(address, type, wo);
+        let binStr = getCombinedBinary(address, type, wo);
+        if (!hexStr) hexStr = rawHex;
+        if (!binStr) binStr = rawBin;
 
         rows += '<tr class="' + rowCls + '" data-address="' + address + '">';
         rows += '<td class="col-address">' + address + '</td>';
@@ -803,13 +1013,11 @@
           });
           rows += '</select></td>';
 
-          // Word Order dropdown (enabled only for 32-bit types).
-          const is32 = (type === 'uint32' || type === 'int32' || type === 'float32');
+          // Word Order dropdown (enabled for 32-bit and 64-bit types).
+          const woEnabled = is32 || is64;
           rows += '<td class="col-wordorder"><select class="row-select wo-sel" data-addr="' + address + '"'
-               + (is32 ? '' : ' disabled') + '>';
-          WORD_ORDERS.forEach(w => {
-            rows += '<option value="' + w.value + '"' + (w.value === wo ? ' selected' : '') + '>' + w.label + '</option>';
-          });
+               + (woEnabled ? '' : ' disabled') + '>';
+          rows += buildWordOrderOptions(type, wo);
           rows += '</select></td>';
 
           // Parsed value.
@@ -837,8 +1045,8 @@
 
       // ---- Bind events after DOM insertion ----
 
-      // Row click for bit inspector (skip Name / Type / Word Order cells).
-      tableBody.querySelectorAll('.reg-table tbody tr:not(.bit-inspector-row)').forEach(row => {
+      // Row click for bit inspector (skip Name / Type / Word Order cells, and consumed rows).
+      tableBody.querySelectorAll('.reg-table tbody tr:not(.bit-inspector-row):not(.consumed-row)').forEach(row => {
         row.addEventListener('click', function (e) {
           if (e.target.closest('.col-name') || e.target.closest('.col-type') || e.target.closest('.col-wordorder')) return;
           if (fc === 1 || fc === 2) return;
@@ -864,7 +1072,16 @@
           const addr  = parseInt(this.getAttribute('data-addr'), 10);
           const type2 = this.value;
           const en    = getEntry(device, fc, addr);
-          saveEntry(device, fc, addr, en.name || '', type2, en.word_order || '');
+          // Reset word order when switching between 16/32/64-bit categories.
+          let newWo = en.word_order || '';
+          if (typeIs64(type2)) {
+            if (!['ABCD', 'BADC', 'CDAB', 'DCBA'].includes(newWo)) newWo = 'ABCD';
+          } else if (typeIs32(type2)) {
+            if (!['AB', 'BA'].includes(newWo)) newWo = 'AB';
+          } else {
+            newWo = '';
+          }
+          saveEntry(device, fc, addr, en.name || '', type2, newWo);
         });
       });
 
