@@ -463,11 +463,6 @@ function renderTargetEdit(device) {
       showToast(unitIdErr);
       return;
     }
-    const suidPortErr = validateStatusUnitIDPortConflicts(proposed);
-    if (suidPortErr) {
-      showToast(suidPortErr);
-      return;
-    }
     const conflictErr = validateStatusSlotConflicts(proposed);
     if (conflictErr) {
       showToast(conflictErr);
