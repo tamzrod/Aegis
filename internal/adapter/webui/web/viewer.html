@@ -429,6 +429,23 @@
       background: #4a9eff;
       box-shadow: 0 0 4px #4a9eff88;
     }
+
+    /* ---- Consumed (sub-register) rows ---- */
+    .reg-table tbody tr.consumed-row {
+      cursor: default;
+      opacity: 0.45;
+    }
+
+    .reg-table tbody tr.consumed-row:hover {
+      background: transparent;
+    }
+
+    .consumed-label {
+      color: #666;
+      font-style: italic;
+      font-size: 0.78rem;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body class="viewer-page">
@@ -932,9 +949,30 @@
       thead += '</tr></thead>';
 
       let rows = '';
-      const consumedAddresses = new Set();
+      const consumedBy = new Map(); // address -> ownerAddress
       lastValues.forEach(({ address, value }) => {
-        if (consumedAddresses.has(address)) return; // skip registers consumed by a multi-reg type
+        const rawHex = '0x' + value.toString(16).toUpperCase().padStart(4, '0');
+        const rawBin = formatBinary(value);
+
+        if (consumedBy.has(address)) {
+          // Render a dimmed, non-editable row showing which register owns this one.
+          const ownerAddr = consumedBy.get(address);
+          rows += '<tr class="consumed-row" data-address="' + address + '">';
+          rows += '<td class="col-address">' + address + '</td>';
+          rows += '<td class="col-name"><span class="consumed-label">\u2014</span></td>';
+          if (!isBit) {
+            rows += '<td class="col-type"><span class="consumed-label">used by ' + ownerAddr + '</span></td>';
+            rows += '<td class="col-wordorder"><span class="consumed-label">\u2014</span></td>';
+            rows += '<td class="col-parsed"><span style="color:#555">\u2014</span></td>';
+          }
+          rows += '<td class="col-decimal">' + value + '</td>';
+          if (!isBit) {
+            rows += '<td class="col-hex">' + rawHex + '</td>';
+            rows += '<td class="col-binary">' + rawBin + '</td>';
+          }
+          rows += '</tr>';
+          return;
+        }
 
         const isExpanded = (expandedRow === address);
         const rowCls   = isExpanded ? 'selected' : '';
@@ -943,10 +981,10 @@
         const type     = entry.type      || '';
         const wo       = entry.word_order || '';
 
-        // Mark subsequent registers as consumed so they are not rendered as separate rows.
+        // Mark subsequent registers as consumed so they render as "used by" rows.
         const regCount = typeRegCount(type);
         for (let i = 1; i < regCount; i++) {
-          consumedAddresses.add(address + i);
+          consumedBy.set(address + i, address);
         }
 
         // Compute display values — use combined for multi-register types.
@@ -954,8 +992,8 @@
         const is64 = typeIs64(type);
         let hexStr = getCombinedHex(address, type, wo);
         let binStr = getCombinedBinary(address, type, wo);
-        if (!hexStr) hexStr = '0x' + value.toString(16).toUpperCase().padStart(4, '0');
-        if (!binStr) binStr = formatBinary(value);
+        if (!hexStr) hexStr = rawHex;
+        if (!binStr) binStr = rawBin;
 
         rows += '<tr class="' + rowCls + '" data-address="' + address + '">';
         rows += '<td class="col-address">' + address + '</td>';
@@ -1007,8 +1045,8 @@
 
       // ---- Bind events after DOM insertion ----
 
-      // Row click for bit inspector (skip Name / Type / Word Order cells).
-      tableBody.querySelectorAll('.reg-table tbody tr:not(.bit-inspector-row)').forEach(row => {
+      // Row click for bit inspector (skip Name / Type / Word Order cells, and consumed rows).
+      tableBody.querySelectorAll('.reg-table tbody tr:not(.bit-inspector-row):not(.consumed-row)').forEach(row => {
         row.addEventListener('click', function (e) {
           if (e.target.closest('.col-name') || e.target.closest('.col-type') || e.target.closest('.col-wordorder')) return;
           if (fc === 1 || fc === 2) return;
