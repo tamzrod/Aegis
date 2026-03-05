@@ -23,8 +23,7 @@ Key goals:
 - The layout is deterministic, enabling tooling to parse status blocks without
   configuration.
 
-State sealing has been removed from the Aegis architecture. It is not part of the
-v1 status plane.
+State sealing is not part of the v1 status plane.
 
 ---
 

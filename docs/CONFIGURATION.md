@@ -30,7 +30,7 @@ Each entry declares one upstream device poll loop.
 | Field | Type | Description |
 |---|---|---|
 | `id` | string | Unique identifier for this unit. |
-| `source.endpoint` | string | `"host:port"` of the upstream Modbus TCP device. |
+| `source.endpoint` | string | `"ip:port"` of the upstream Modbus TCP device. Must be a strict IPv4 address (no hostnames). Port must be in range [1, 65535]. Example: `"192.168.1.100:502"`. |
 | `source.unit_id` | uint8 | Modbus unit ID on the upstream device. |
 | `source.timeout_ms` | int | Read timeout in milliseconds. Must be > 0. |
 | `reads[]` | list | At least one read block required. |
@@ -43,7 +43,7 @@ Each entry declares one upstream device poll loop.
 | Field | Type | Description |
 |---|---|---|
 | `source.device_name` | string | Up to 16 ASCII characters. Written into the status block header. |
-| `target.status_unit_id` | uint16 | Unit ID for the status memory surface. Required when `target.status_slot` is set. Must differ from all data `unit_id` values on the same port. |
+| `target.status_unit_id` | uint16 | Unit ID for the status memory surface. When omitted, defaults to `100`. Required (explicitly or by default) when `target.status_slot` is set. Must differ from all data `unit_id` values on the same port. |
 | `target.status_slot` | uint16 | Zero-based slot index for this unit's 30-register status block. Required when `target.status_unit_id` is set. Must be unique per `(port, status_unit_id)`. |
 | `target.offsets` | map[int]uint16 | Per-FC address deltas applied to destination addresses. Key is FC (1–4); missing FC defaults to 0. |
 
@@ -118,12 +118,15 @@ The process exits immediately on any of the following:
 
 - No replicator units defined.
 - Duplicate replicator unit IDs.
+- `source.endpoint` is not a valid strict IPv4:port string (hostnames are not accepted).
+- `source.timeout_ms` is not > 0.
 - `target.port == 0`.
 - `target.unit_id` not in [1, 255].
 - `target.status_slot` set without `target.status_unit_id`.
 - `target.status_unit_id` equals any data `unit_id` on the same port.
 - Duplicate `status_slot` for the same `(port, status_unit_id)`.
-- Overlapping read ranges for the same `(port, unit_id, FC)` across different units (write conflict).
+- Duplicate `(port, unit_id)` across different replicator units.
+- Duplicate read block `(fc, address, quantity)` within the same unit.
 - Invalid FC (not 1–4), zero quantity, or non-positive `interval_ms` in any read block.
 - Unknown or empty `target.mode`.
 
