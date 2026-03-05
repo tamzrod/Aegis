@@ -58,6 +58,11 @@ func validateReplicator(cfg *Config) error {
 		return err
 	}
 
+	// Enforce one status_unit_id per port.
+	if err := validateStatusUnitIDPerPort(cfg); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -235,6 +240,38 @@ func validateStatusSlots(cfg *Config) error {
 			)
 		}
 		seenSlots[sk][slot] = u.ID
+	}
+	return nil
+}
+
+// validateStatusUnitIDPerPort enforces that all replicator units on the same
+// target.port share the same status_unit_id value. Units that do not set a
+// status_unit_id are excluded from the check.
+func validateStatusUnitIDPerPort(cfg *Config) error {
+	// portStatusUID maps port → the first status_unit_id seen on that port (and the unit ID that set it).
+	type portEntry struct {
+		statusUnitID uint16
+		firstUnit    string
+	}
+	seen := make(map[uint16]portEntry)
+
+	for i, u := range cfg.Replicator.Units {
+		if u.Target.StatusUnitID == nil {
+			continue
+		}
+		port := u.Target.Port
+		suid := *u.Target.StatusUnitID
+		if entry, exists := seen[port]; exists {
+			if entry.statusUnitID != suid {
+				return fmt.Errorf(
+					"replicator.units[%d] (%s): all devices on the same port must share the same Status Unit ID "+
+						"(port=%d: existing status_unit_id=%d set by unit %q, got %d)",
+					i, u.ID, port, entry.statusUnitID, entry.firstUnit, suid,
+				)
+			}
+		} else {
+			seen[port] = portEntry{statusUnitID: suid, firstUnit: u.ID}
+		}
 	}
 	return nil
 }

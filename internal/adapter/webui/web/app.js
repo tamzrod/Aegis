@@ -78,6 +78,39 @@ function validateStatusSlotConflicts(devices) {
   return null;
 }
 
+// validateStatusUnitIDPortConflicts returns an error string if any two devices
+// in the list share the same target.port but have different status_unit_ids,
+// or null if there is no conflict.
+function validateStatusUnitIDPortConflicts(devices) {
+  const seen = new Map(); // port → status_unit_id
+  for (const d of devices) {
+    const tgt = d.target || {};
+    if (!tgt.port || !tgt.status_unit_id) continue;
+    if (seen.has(tgt.port)) {
+      if (seen.get(tgt.port) !== tgt.status_unit_id) {
+        return 'All devices on the same port must share the same Status Unit ID.';
+      }
+    } else {
+      seen.set(tgt.port, tgt.status_unit_id);
+    }
+  }
+  return null;
+}
+
+// getSharedStatusUnitId returns the status_unit_id already in use on the given
+// port by any device other than the one identified by excludeKey, or null if
+// no other device on that port has a status_unit_id set.
+function getSharedStatusUnitId(devices, port, excludeKey) {
+  for (const d of devices) {
+    if (d.key === excludeKey) continue;
+    const tgt = d.target || {};
+    if (tgt.port === port && tgt.status_unit_id) {
+      return tgt.status_unit_id;
+    }
+  }
+  return null;
+}
+
 // validateUnitIdConflicts returns an error string if any two devices in the list
 // share the same (port, unit_id), or null if there is no conflict.
 function validateUnitIdConflicts(devices) {
@@ -303,16 +336,19 @@ function renderTargetEdit(device) {
   const table   = document.createElement('table');
   table.className = 'field-table';
 
-  const statusUnitIdDefault = tgt.status_unit_id || 100;
+  const currentPort = tgt.port || 502;
+  const sharedSuid = getSharedStatusUnitId(workingConfig.devices, currentPort, device.key);
+  const statusUnitIdDefault = sharedSuid || tgt.status_unit_id || 100;
   const autoSlot = nextAvailableSlot(workingConfig.devices, statusUnitIdDefault, device.key);
   const numFields = [
-    { label: 'Port',           key: 'port',           value: tgt.port || 502 },
+    { label: 'Port',           key: 'port',           value: currentPort },
     { label: 'Unit ID',        key: 'unit_id',        value: tgt.unit_id        ?? 0 },
     { label: 'Status Unit ID', key: 'status_unit_id', value: statusUnitIdDefault },
     { label: 'Status Slot',    key: 'status_slot',    value: autoSlot },
   ];
   const inputs = {};
   let slotHintEl = null;
+  let statusUnitIdHintEl = null;
   numFields.forEach(f => {
     const tr  = document.createElement('tr');
     const th  = document.createElement('th');
@@ -325,6 +361,11 @@ function renderTargetEdit(device) {
     inp.value     = f.value;
     inputs[f.key] = inp;
     td.appendChild(inp);
+    if (f.key === 'status_unit_id') {
+      statusUnitIdHintEl = document.createElement('span');
+      statusUnitIdHintEl.className = 'slot-hint';
+      td.appendChild(statusUnitIdHintEl);
+    }
     if (f.key === 'status_slot') {
       slotHintEl = document.createElement('span');
       slotHintEl.className = 'slot-hint';
@@ -334,6 +375,22 @@ function renderTargetEdit(device) {
     tr.appendChild(td);
     table.appendChild(tr);
   });
+
+  // Apply shared-port lock: disable Status Unit ID when another device on the
+  // same port has already claimed a status_unit_id.
+  function applyStatusUnitIdLock(port) {
+    const shared = getSharedStatusUnitId(workingConfig.devices, port, device.key);
+    if (shared !== null) {
+      inputs['status_unit_id'].value    = shared;
+      inputs['status_unit_id'].disabled = true;
+      statusUnitIdHintEl.textContent    = ' Status Unit ID is shared for this port';
+    } else {
+      inputs['status_unit_id'].disabled = false;
+      statusUnitIdHintEl.textContent    = '';
+    }
+  }
+
+  applyStatusUnitIdLock(currentPort);
 
   function updateSlotHint(statusUnitId) {
     if (!slotHintEl) return;
@@ -345,6 +402,16 @@ function renderTargetEdit(device) {
   }
 
   updateSlotHint(statusUnitIdDefault);
+
+  // When the port changes, re-evaluate the shared status_unit_id lock.
+  inputs['port'].addEventListener('input', () => {
+    const port = parseInt(inputs['port'].value, 10) || 0;
+    applyStatusUnitIdLock(port);
+    const uid = parseInt(inputs['status_unit_id'].value, 10) || 0;
+    const next = nextAvailableSlot(workingConfig.devices, uid, device.key);
+    inputs['status_slot'].value = next;
+    updateSlotHint(uid);
+  });
 
   inputs['status_unit_id'].addEventListener('input', () => {
     const uid = parseInt(inputs['status_unit_id'].value, 10) || 0;
@@ -394,6 +461,11 @@ function renderTargetEdit(device) {
     const unitIdErr = validateUnitIdConflicts(proposed);
     if (unitIdErr) {
       showToast(unitIdErr);
+      return;
+    }
+    const suidPortErr = validateStatusUnitIDPortConflicts(proposed);
+    if (suidPortErr) {
+      showToast(suidPortErr);
       return;
     }
     const conflictErr = validateStatusSlotConflicts(proposed);
