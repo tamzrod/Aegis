@@ -1381,3 +1381,176 @@ func TestHelpPageServed(t *testing.T) {
 		t.Errorf("expected help page body to contain 'Aegis Documentation', got: %.200s", body)
 	}
 }
+
+// ---------- handleViewerRead tests ----------
+
+// mockViewerReader implements ViewerReader for testing.
+type mockViewerReader struct {
+	mockManager
+	values   []uint16
+	readErr  error
+	lastKey  string
+	lastFC   uint8
+	lastAddr uint16
+	lastQty  uint16
+}
+
+func (m *mockViewerReader) ReadViewerRegisters(deviceKey string, fc uint8, address, quantity uint16) ([]uint16, error) {
+	m.lastKey = deviceKey
+	m.lastFC = fc
+	m.lastAddr = address
+	m.lastQty = quantity
+	return m.values, m.readErr
+}
+
+// TestHandleViewerReadOK verifies GET /api/viewer/read returns 200 with register values.
+func TestHandleViewerReadOK(t *testing.T) {
+	mgr := &mockViewerReader{values: []uint16{230, 125, 5400}}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/viewer/read?device=inv01&fc=3&address=7000&quantity=3", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+	var got viewerReadResponse
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Device != "inv01" {
+		t.Errorf("want device=inv01, got %q", got.Device)
+	}
+	if got.FC != 3 {
+		t.Errorf("want fc=3, got %d", got.FC)
+	}
+	if got.Address != 7000 {
+		t.Errorf("want address=7000, got %d", got.Address)
+	}
+	if len(got.Values) != 3 || got.Values[0] != 230 || got.Values[1] != 125 || got.Values[2] != 5400 {
+		t.Errorf("unexpected values: %v", got.Values)
+	}
+}
+
+// TestHandleViewerReadMissingDevice verifies GET /api/viewer/read returns 400 when device is missing.
+func TestHandleViewerReadMissingDevice(t *testing.T) {
+	mgr := &mockViewerReader{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/viewer/read?fc=3&address=0&quantity=10", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+// TestHandleViewerReadMissingParams verifies GET /api/viewer/read returns 400 when fc/address/quantity are missing.
+func TestHandleViewerReadMissingParams(t *testing.T) {
+	mgr := &mockViewerReader{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/viewer/read?device=inv01&address=0&quantity=10", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHandleViewerReadInvalidFC verifies GET /api/viewer/read returns 400 for fc=5.
+func TestHandleViewerReadInvalidFC(t *testing.T) {
+	mgr := &mockViewerReader{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/viewer/read?device=inv01&fc=5&address=0&quantity=10", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+// TestHandleViewerReadZeroQuantity verifies GET /api/viewer/read returns 400 for quantity=0.
+func TestHandleViewerReadZeroQuantity(t *testing.T) {
+	mgr := &mockViewerReader{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/viewer/read?device=inv01&fc=3&address=0&quantity=0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+// TestHandleViewerReadBackendError verifies GET /api/viewer/read returns 502 when the store read fails.
+func TestHandleViewerReadBackendError(t *testing.T) {
+	mgr := &mockViewerReader{readErr: errors.New("memory not found")}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/viewer/read?device=inv01&fc=3&address=7000&quantity=10", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("want 502, got %d", rec.Code)
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "error") {
+		t.Errorf("expected JSON error field in body: %q", body)
+	}
+}
+
+// TestHandleViewerReadNoProvider verifies GET /api/viewer/read returns 503 when no ViewerReader is registered.
+func TestHandleViewerReadNoProvider(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/viewer/read?device=inv01&fc=3&address=0&quantity=10", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d", rec.Code)
+	}
+}
+
+// TestHandleViewerReadMethodNotAllowed verifies POST /api/viewer/read returns 405.
+func TestHandleViewerReadMethodNotAllowed(t *testing.T) {
+	mgr := &mockViewerReader{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/viewer/read", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
+	}
+}
+
+// TestViewerPageServed verifies GET /viewer returns 200 and the viewer page HTML.
+func TestViewerPageServed(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/viewer", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Data Viewer") {
+		t.Errorf("expected viewer page body to contain 'Data Viewer', got: %.200s", body)
+	}
+}
