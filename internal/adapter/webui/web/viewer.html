@@ -414,6 +414,44 @@
       font-size: 0.875rem;
     }
 
+    /* ---- Device health indicator ---- */
+    .viewer-health {
+      font-size: 0.8rem;
+      color: #888;
+      align-self: flex-end;
+      padding-bottom: 0.35rem;
+    }
+
+    .viewer-health__row {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      white-space: nowrap;
+      line-height: 1.6;
+    }
+
+    .viewer-health__dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #555;
+      flex-shrink: 0;
+    }
+
+    .viewer-health__dot--ok      { background: #22c55e; box-shadow: 0 0 4px #22c55e88; }
+    .viewer-health__dot--warning { background: #f59e0b; box-shadow: 0 0 4px #f59e0b88; }
+    .viewer-health__dot--error   { background: #ef4444; box-shadow: 0 0 4px #ef444488; }
+    .viewer-health__dot--offline { background: #6b7280; }
+
+    .viewer-health__val {
+      color: #c8d8ff;
+    }
+
+    .viewer-health__val--ok      { color: #22c55e; }
+    .viewer-health__val--warning { color: #f59e0b; }
+    .viewer-health__val--error   { color: #ef4444; }
+    .viewer-health__val--offline { color: #6b7280; }
+
     /* ---- Auto-refresh indicator dot ---- */
     .refresh-dot {
       width: 7px;
@@ -472,11 +510,27 @@
         </select>
       </div>
 
-      <div class="viewer-controls__sep"></div>
-
       <div id="v-endpoint-info" class="viewer-endpoint" style="display:none">
         <span id="v-endpoint-text"></span>
       </div>
+
+      <div id="v-health" class="viewer-health" style="display:none">
+        <div class="viewer-health__row">
+          <span class="viewer-controls__label" style="margin:0">Health</span>
+          <span id="v-health-dot" class="viewer-health__dot"></span>
+          <span id="v-health-text" class="viewer-health__val">—</span>
+        </div>
+        <div class="viewer-health__row">
+          <span class="viewer-controls__label" style="margin:0">Online</span>
+          <span id="v-health-online" class="viewer-health__val">—</span>
+        </div>
+        <div class="viewer-health__row">
+          <span class="viewer-controls__label" style="margin:0">Req/s</span>
+          <span id="v-health-rps" class="viewer-health__val">—</span>
+        </div>
+      </div>
+
+      <div class="viewer-controls__sep"></div>
 
       <div class="viewer-controls__group">
         <span class="viewer-controls__label">Function Code</span>
@@ -500,9 +554,15 @@
                class="viewer-controls__input viewer-controls__input--short" placeholder="10">
       </div>
 
+      <div class="viewer-controls__group">
+        <span class="viewer-controls__label">Refresh Rate (ms)</span>
+        <input id="v-refresh-rate" type="number" min="100" max="60000" value="1000"
+               class="viewer-controls__input viewer-controls__input--short" placeholder="1000">
+      </div>
+
       <div class="viewer-controls__actions">
         <button id="v-read-btn" class="btn-primary">Read</button>
-        <label class="viewer-controls__refresh" title="Refresh every second">
+        <label class="viewer-controls__refresh" title="Auto-refresh using the configured rate">
           <input id="v-auto-refresh" type="checkbox">
           Auto-refresh <span id="v-refresh-dot" class="refresh-dot"></span>
         </label>
@@ -534,9 +594,13 @@
     let lastValues = [];     // last read register values [{address, value}]
     let expandedRow = null;  // address of currently expanded bit inspector row
     let refreshTimer = null;
+    let healthTimer = null;
+    let lastReqTotal = null; // {count, ts} for requests/sec computation
     let dataviewConfig = {}; // {device: {fc_key: {addr_key: {name,type,word_order}}}}
 
-    const AUTO_REFRESH_INTERVAL_MS = 1000;
+    const DEFAULT_REFRESH_RATE_MS = 1000;
+    const MIN_REFRESH_RATE_MS = 100;
+    const MAX_REFRESH_RATE_MS = 60000;
     const MAX_NAME_LENGTH = 80; // Maximum characters for a register label.
 
     // Supported data types for register interpretation.
@@ -567,17 +631,23 @@
     ];
 
     // ---- DOM refs ----
-    const selDevice   = document.getElementById('v-device');
-    const selFC       = document.getElementById('v-fc');
-    const inpAddress  = document.getElementById('v-address');
-    const inpQuantity = document.getElementById('v-quantity');
-    const btnRead     = document.getElementById('v-read-btn');
-    const chkRefresh  = document.getElementById('v-auto-refresh');
-    const dotRefresh  = document.getElementById('v-refresh-dot');
-    const tableBody   = document.getElementById('v-table-body');
-    const cardMeta    = document.getElementById('v-card-meta');
-    const epInfo      = document.getElementById('v-endpoint-info');
-    const epText      = document.getElementById('v-endpoint-text');
+    const selDevice     = document.getElementById('v-device');
+    const selFC         = document.getElementById('v-fc');
+    const inpAddress    = document.getElementById('v-address');
+    const inpQuantity   = document.getElementById('v-quantity');
+    const inpRefreshRate = document.getElementById('v-refresh-rate');
+    const btnRead       = document.getElementById('v-read-btn');
+    const chkRefresh    = document.getElementById('v-auto-refresh');
+    const dotRefresh    = document.getElementById('v-refresh-dot');
+    const tableBody     = document.getElementById('v-table-body');
+    const cardMeta      = document.getElementById('v-card-meta');
+    const epInfo        = document.getElementById('v-endpoint-info');
+    const epText        = document.getElementById('v-endpoint-text');
+    const healthPanel   = document.getElementById('v-health');
+    const healthDot     = document.getElementById('v-health-dot');
+    const healthText    = document.getElementById('v-health-text');
+    const healthOnline  = document.getElementById('v-health-online');
+    const healthRps     = document.getElementById('v-health-rps');
 
     // ---- Init ----
     loadDevices();
@@ -587,6 +657,8 @@
     selDevice.addEventListener('change', onDeviceChange);
     btnRead.addEventListener('click', doRead);
     chkRefresh.addEventListener('change', onAutoRefreshChange);
+    inpRefreshRate.addEventListener('change', onRefreshRateChange);
+    inpRefreshRate.addEventListener('input', onRefreshRateChange);
 
     // ---- Load device list ----
     function loadDevices() {
@@ -679,15 +751,31 @@
       } else {
         epInfo.style.display = 'none';
       }
+      // Reset health and request rate tracking when device changes.
+      lastReqTotal = null;
+      updateHealthUI(null);
+      if (key) {
+        startHealthPolling(key, dev);
+      } else {
+        stopHealthPolling();
+        healthPanel.style.display = 'none';
+      }
       // Clear table when device changes.
       clearTable();
+    }
+
+    function getRefreshRateMs() {
+      const v = parseInt(inpRefreshRate.value, 10);
+      if (isNaN(v) || v < MIN_REFRESH_RATE_MS) return MIN_REFRESH_RATE_MS;
+      if (v > MAX_REFRESH_RATE_MS) return MAX_REFRESH_RATE_MS;
+      return v;
     }
 
     function onAutoRefreshChange() {
       if (chkRefresh.checked) {
         dotRefresh.classList.add('active');
         doRead();
-        refreshTimer = setInterval(doRead, AUTO_REFRESH_INTERVAL_MS);
+        refreshTimer = setInterval(doRead, getRefreshRateMs());
       } else {
         dotRefresh.classList.remove('active');
         if (refreshTimer !== null) {
@@ -695,6 +783,117 @@
           refreshTimer = null;
         }
       }
+    }
+
+    function onRefreshRateChange() {
+      // Clamp value to valid range on user change.
+      const v = parseInt(inpRefreshRate.value, 10);
+      if (!isNaN(v)) {
+        if (v < MIN_REFRESH_RATE_MS) inpRefreshRate.value = MIN_REFRESH_RATE_MS;
+        else if (v > MAX_REFRESH_RATE_MS) inpRefreshRate.value = MAX_REFRESH_RATE_MS;
+      }
+      // Restart timer with new interval if auto-refresh is active.
+      if (chkRefresh.checked && refreshTimer !== null) {
+        clearInterval(refreshTimer);
+        refreshTimer = setInterval(doRead, getRefreshRateMs());
+      }
+    }
+
+    // ---- Health indicator ----
+    function startHealthPolling(deviceKey, dev) {
+      stopHealthPolling();
+      healthPanel.style.display = '';
+      // Immediate first fetch, then poll every 2 s.
+      fetchHealth(deviceKey, dev);
+      healthTimer = setInterval(() => fetchHealth(deviceKey, dev), 2000);
+    }
+
+    function stopHealthPolling() {
+      if (healthTimer !== null) {
+        clearInterval(healthTimer);
+        healthTimer = null;
+      }
+    }
+
+    function fetchHealth(deviceKey, dev) {
+      // Use /api/runtime/devices for health and online status.
+      fetch('/api/runtime/devices')
+        .then(r => r.json())
+        .then(list => {
+          const entry = Array.isArray(list) ? list.find(d => d.id === deviceKey) : null;
+          updateHealthUI(entry);
+        })
+        .catch(() => {
+          updateHealthUI(null);
+        });
+
+      // Use /api/device/status for requests/sec if target params are available.
+      const target = dev && dev.target;
+      if (target && target.port && target.status_unit_id && target.status_slot) {
+        const url = '/api/device/status?port=' + target.port
+                  + '&unit_id=' + target.status_unit_id
+                  + '&slot=' + target.status_slot;
+        fetch(url)
+          .then(r => r.ok ? r.json() : null)
+          .then(snap => {
+            if (!snap) {
+              healthRps.textContent = '\u2014';
+              return;
+            }
+            const now = Date.now();
+            const total = snap.requests_total || 0;
+            if (lastReqTotal !== null) {
+              const dt = (now - lastReqTotal.ts) / 1000;
+              const rate = dt > 0 ? (total - lastReqTotal.count) / dt : 0;
+              healthRps.textContent = rate.toFixed(1);
+            }
+            lastReqTotal = { count: total, ts: now };
+          })
+          .catch(() => { healthRps.textContent = '\u2014'; });
+      } else {
+        healthRps.textContent = '\u2014';
+      }
+    }
+
+    function updateHealthUI(entry) {
+      healthPanel.style.display = '';
+
+      if (!entry) {
+        // No data available.
+        healthDot.className = 'viewer-health__dot';
+        healthText.className = 'viewer-health__val';
+        healthText.textContent = '\u2014';
+        healthOnline.textContent = '\u2014';
+        return;
+      }
+
+      const status = (entry.status || '').toLowerCase();
+      let dotCls = 'viewer-health__dot';
+      let valCls = 'viewer-health__val';
+      let label  = '\u2014';
+
+      if (status === 'online') {
+        dotCls += ' viewer-health__dot--ok';
+        valCls += ' viewer-health__val--ok';
+        label   = 'OK';
+      } else if (status === 'warning') {
+        dotCls += ' viewer-health__dot--warning';
+        valCls += ' viewer-health__val--warning';
+        label   = 'Warning';
+      } else if (status === 'error') {
+        dotCls += ' viewer-health__dot--error';
+        valCls += ' viewer-health__val--error';
+        label   = 'Error';
+      } else if (status === 'offline') {
+        dotCls += ' viewer-health__dot--offline';
+        valCls += ' viewer-health__val--offline';
+        label   = 'OFFLINE';
+      }
+
+      healthDot.className    = dotCls;
+      healthText.className   = valCls;
+      healthText.textContent = label;
+      healthOnline.textContent = entry.polling ? 'Yes' : 'No';
     }
 
     // ---- Read registers ----
