@@ -19,6 +19,20 @@ type DeviceStatus struct {
 	Polling bool   `json:"polling"` // true if a successful poll occurred recently
 }
 
+// StatusBlockSnapshot holds the decoded contents of a device status register block.
+// It is produced by DeviceStatusReader and consumed by the WebUI layer.
+type StatusBlockSnapshot struct {
+	Health              string `json:"health"`
+	Online              bool   `json:"online"`
+	SecondsInError      uint16 `json:"seconds_in_error"`
+	RequestsTotal       uint32 `json:"requests_total"`
+	ResponsesValid      uint32 `json:"responses_valid"`
+	TimeoutsTotal       uint32 `json:"timeouts_total"`
+	TransportErrors     uint32 `json:"transport_errors"`
+	ConsecutiveFailCurr uint16 `json:"consecutive_fail_curr"`
+	ConsecutiveFailMax  uint16 `json:"consecutive_fail_max"`
+}
+
 // ListenerStatus describes the bind result for one Modbus TCP adapter port.
 // It is safe to copy by value.
 type ListenerStatus struct {

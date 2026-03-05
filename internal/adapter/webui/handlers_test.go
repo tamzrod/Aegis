@@ -17,17 +17,17 @@ import (
 
 // mockManager implements Manager for testing.
 type mockManager struct {
-	yaml             []byte
-	applyErr         error
-	reloadErr        error
-	rebuildErr       error
-	startRuntimeErr  error
-	stopRuntimeErr   error
-	reloadCalled     int32 // accessed atomically
+	yaml            []byte
+	applyErr        error
+	reloadErr       error
+	rebuildErr      error
+	startRuntimeErr error
+	stopRuntimeErr  error
+	reloadCalled    int32 // accessed atomically
 }
 
-func (m *mockManager) GetActiveConfigYAML() []byte  { return m.yaml }
-func (m *mockManager) ApplyConfig(b []byte) error   { return m.applyErr }
+func (m *mockManager) GetActiveConfigYAML() []byte { return m.yaml }
+func (m *mockManager) ApplyConfig(b []byte) error  { return m.applyErr }
 func (m *mockManager) ReloadFromDisk() error {
 	atomic.AddInt32(&m.reloadCalled, 1)
 	return m.reloadErr
@@ -1015,8 +1015,8 @@ func TestFormAuthEmptyConfigRedirects(t *testing.T) {
 // mockPasswordUpdater implements PasswordUpdater for testing.
 type mockPasswordUpdater struct {
 	mockManager
-	updateErr      error
-	updatedHash    string
+	updateErr   error
+	updatedHash string
 }
 
 func (m *mockPasswordUpdater) UpdatePasswordHash(hash string) error {
@@ -1238,5 +1238,128 @@ func TestFaviconRoutesPublic(t *testing.T) {
 		if !strings.HasPrefix(ct, tc.contentType) {
 			t.Errorf("GET %s: want Content-Type %q, got %q", tc.path, tc.contentType, ct)
 		}
+	}
+}
+
+// ---------- handleDeviceStatus tests ----------
+
+// mockDeviceStatusReader implements DeviceStatusReader for testing.
+type mockDeviceStatusReader struct {
+	snap    *runtime.StatusBlockSnapshot
+	readErr error
+}
+
+func (m *mockDeviceStatusReader) ReadDeviceStatus(port, statusUnitID, statusSlot uint16) (*runtime.StatusBlockSnapshot, error) {
+	return m.snap, m.readErr
+}
+
+// mockManagerWithDSR embeds mockManager and also implements DeviceStatusReader.
+type mockManagerWithDSR struct {
+	mockManager
+	dsr mockDeviceStatusReader
+}
+
+func (m *mockManagerWithDSR) ReadDeviceStatus(port, statusUnitID, statusSlot uint16) (*runtime.StatusBlockSnapshot, error) {
+	return m.dsr.ReadDeviceStatus(port, statusUnitID, statusSlot)
+}
+
+// TestHandleDeviceStatusOK verifies GET /api/device/status returns 200 with the snapshot.
+func TestHandleDeviceStatusOK(t *testing.T) {
+	snap := &runtime.StatusBlockSnapshot{
+		Health:              "OK",
+		Online:              true,
+		RequestsTotal:       42,
+		ResponsesValid:      40,
+		TimeoutsTotal:       2,
+		TransportErrors:     0,
+		ConsecutiveFailCurr: 0,
+		ConsecutiveFailMax:  1,
+	}
+	mgr := &mockManagerWithDSR{dsr: mockDeviceStatusReader{snap: snap}}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/device/status?port=502&unit_id=100&slot=0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("unexpected Content-Type: %q", ct)
+	}
+	var got runtime.StatusBlockSnapshot
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Health != "OK" {
+		t.Errorf("health: want OK, got %q", got.Health)
+	}
+	if !got.Online {
+		t.Error("want online=true")
+	}
+	if got.RequestsTotal != 42 {
+		t.Errorf("requests_total: want 42, got %d", got.RequestsTotal)
+	}
+}
+
+// TestHandleDeviceStatusMissingParams verifies GET /api/device/status returns 400
+// when required query parameters are absent.
+func TestHandleDeviceStatusMissingParams(t *testing.T) {
+	mgr := &mockManagerWithDSR{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/device/status?unit_id=100&slot=0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d", rec.Code)
+	}
+}
+
+// TestHandleDeviceStatusNotFound verifies GET /api/device/status returns 404
+// when the status block is not found in the store.
+func TestHandleDeviceStatusNotFound(t *testing.T) {
+	mgr := &mockManagerWithDSR{
+		dsr: mockDeviceStatusReader{readErr: errors.New("status memory not found")},
+	}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/device/status?port=502&unit_id=100&slot=0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d", rec.Code)
+	}
+}
+
+// TestHandleDeviceStatusNoProvider verifies GET /api/device/status returns 503
+// when no DeviceStatusReader is registered (manager does not implement the interface).
+func TestHandleDeviceStatusNoProvider(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/device/status?port=502&unit_id=100&slot=0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d", rec.Code)
+	}
+}
+
+// TestHandleDeviceStatusMethodNotAllowed verifies POST /api/device/status returns 405.
+func TestHandleDeviceStatusMethodNotAllowed(t *testing.T) {
+	mgr := &mockManagerWithDSR{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/device/status?port=502&unit_id=100&slot=0", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("want 405, got %d", rec.Code)
 	}
 }

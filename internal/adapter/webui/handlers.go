@@ -3,6 +3,7 @@ package webui
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -26,6 +27,7 @@ type handlers struct {
 	sp       StatusProvider
 	lp       ListenerProvider
 	dp       DeviceStatusProvider
+	dsr      DeviceStatusReader
 	pu       PasswordUpdater
 	sessions *sessionStore
 	authMu   sync.RWMutex
@@ -120,6 +122,52 @@ func (h *handlers) handleRuntimeDevices(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(statuses)
+}
+
+// handleDeviceStatus serves GET /api/device/status.
+// Query parameters: port, unit_id (status_unit_id), slot (status_slot).
+// It reads and returns the decoded device status register block from the store.
+func (h *handlers) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.dsr == nil {
+		writeError(w, http.StatusServiceUnavailable, "device status not available")
+		return
+	}
+
+	parseU16 := func(key string) (uint16, bool) {
+		s := r.URL.Query().Get(key)
+		if s == "" {
+			return 0, false
+		}
+		var v uint16
+		if _, err := fmt.Sscanf(s, "%d", &v); err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+
+	port, okPort := parseU16("port")
+	unitID, okUnit := parseU16("unit_id")
+	slot, okSlot := parseU16("slot")
+
+	if !okPort || !okUnit || !okSlot {
+		writeError(w, http.StatusBadRequest, "port, unit_id, and slot query parameters are required")
+		return
+	}
+
+	snap, err := h.dsr.ReadDeviceStatus(port, unitID, slot)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(snap)
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {

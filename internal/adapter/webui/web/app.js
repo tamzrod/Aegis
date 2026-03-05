@@ -537,6 +537,104 @@ function renderReadsList(device, editIndex) {
   content.appendChild(ul);
 }
 
+// ---------- Device Status panel ----------
+
+let _deviceStatusTimer = null;
+
+// healthColor returns a CSS class name matching the health string.
+function healthColor(health) {
+  switch ((health || '').toUpperCase()) {
+    case 'OK':       return 'ds-health-ok';
+    case 'ERROR':    return 'ds-health-error';
+    case 'STALE':    return 'ds-health-stale';
+    case 'DISABLED': return 'ds-health-disabled';
+    default:         return 'ds-health-unknown';
+  }
+}
+
+function renderDeviceStatusPanel(data) {
+  const section = document.getElementById('device-status-section');
+  const content = document.getElementById('device-status-content');
+  if (!data) {
+    section.style.display = 'none';
+    content.innerHTML = '';
+    return;
+  }
+  section.style.display = '';
+
+  const table = document.createElement('table');
+  table.className = 'field-table';
+
+  const healthSpan = document.createElement('span');
+  healthSpan.className = 'ds-health-badge ' + healthColor(data.health);
+  healthSpan.textContent = data.health || 'UNKNOWN';
+
+  const rows = [
+    ['Health',            healthSpan],
+    ['Online',            data.online ? 'Yes' : 'No'],
+    ['Seconds in Error',  data.seconds_in_error ?? '—'],
+    ['Requests Total',    data.requests_total    ?? '—'],
+    ['Responses Valid',   data.responses_valid   ?? '—'],
+    ['Timeouts',          data.timeouts_total    ?? '—'],
+    ['Transport Errors',  data.transport_errors  ?? '—'],
+    ['Consec. Fails (now)', data.consecutive_fail_curr ?? '—'],
+    ['Consec. Fails (max)', data.consecutive_fail_max  ?? '—'],
+  ];
+
+  rows.forEach(([label, value]) => {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.textContent = label;
+    const td = document.createElement('td');
+    if (value instanceof Element) {
+      td.appendChild(value);
+    } else {
+      td.textContent = value;
+    }
+    tr.appendChild(th);
+    tr.appendChild(td);
+    table.appendChild(tr);
+  });
+
+  content.innerHTML = '';
+  content.appendChild(table);
+}
+
+function stopDeviceStatusPolling() {
+  if (_deviceStatusTimer !== null) {
+    clearInterval(_deviceStatusTimer);
+    _deviceStatusTimer = null;
+  }
+}
+
+function startDeviceStatusPolling(port, statusUnitId, statusSlot) {
+  stopDeviceStatusPolling();
+
+  if (!port || !statusUnitId) {
+    renderDeviceStatusPanel(null);
+    return;
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch(
+        `/api/device/status?port=${port}&unit_id=${statusUnitId}&slot=${statusSlot}`
+      );
+      if (!res.ok) {
+        renderDeviceStatusPanel(null);
+        return;
+      }
+      const data = await res.json();
+      renderDeviceStatusPanel(data);
+    } catch (e) {
+      // Server may be temporarily unavailable — keep the panel visible but stale.
+    }
+  }
+
+  poll();
+  _deviceStatusTimer = setInterval(poll, 1000);
+}
+
 // ---------- Render selected device ----------
 
 function renderDevice(device) {
@@ -545,11 +643,16 @@ function renderDevice(device) {
      'src-actions', 'reads-actions', 'tgt-actions'].forEach(id => {
       document.getElementById(id).innerHTML = '';
     });
+    stopDeviceStatusPolling();
+    renderDeviceStatusPanel(null);
     return;
   }
   renderSourceView(device);
   renderReadsList(device);
   renderTargetView(device);
+
+  const tgt = device.target || {};
+  startDeviceStatusPolling(tgt.port, tgt.status_unit_id, tgt.status_slot);
 }
 
 // ---------- Device list ----------
