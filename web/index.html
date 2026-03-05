@@ -72,11 +72,11 @@
                 <section class="config-section">
                     <h3>Reads</h3>
                     <div class="config-content">
-                        <div class="add-read-placeholder">+ Add Read</div>
-                        <div class="reads-container">
-                            <div id="readsList" class="reads-list">
-                                <!-- Populated by JavaScript -->
-                            </div>
+                        <div id="readsList" class="reads-list">
+                            <!-- Populated by JavaScript -->
+                        </div>
+                        <div>
+                            <button class="btn btn-primary btn-add-read" id="addReadBtn">+ Add Read</button>
                         </div>
                     </div>
                 </section>
@@ -116,5 +116,35 @@
     </div>
 
     <script src="/app.js"></script>
+
+    <!-- Read Add/Edit Modal -->
+    <div id="readModal" class="modal-overlay" style="display:none;">
+        <div class="modal">
+            <h3 id="readModalTitle">Add Read</h3>
+            <div id="readModalError" class="modal-error" style="display:none;"></div>
+            <div class="modal-fields">
+                <label class="modal-label">
+                    FC (1–4)
+                    <input id="readFc" type="number" min="1" max="4" class="modal-input" placeholder="e.g. 3">
+                </label>
+                <label class="modal-label">
+                    Address
+                    <input id="readAddress" type="number" min="0" max="65535" class="modal-input" placeholder="e.g. 0">
+                </label>
+                <label class="modal-label">
+                    Quantity
+                    <input id="readQuantity" type="number" min="1" max="65535" class="modal-input" placeholder="e.g. 10">
+                </label>
+                <label class="modal-label">
+                    Interval (ms)
+                    <input id="readInterval" type="number" min="1" class="modal-input" placeholder="e.g. 1000">
+                </label>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-primary" id="readModalSave">Save</button>
+                <button class="btn btn-secondary" id="readModalCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

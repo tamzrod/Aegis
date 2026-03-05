@@ -337,3 +337,66 @@ func TestValidateEndpointInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateDuplicateReadsBlocked(t *testing.T) {
+	// Two reads with identical FC, Address, Quantity (different Interval) must be rejected.
+	cfg := validBaseConfig()
+	cfg.Replicator.Units[0].Reads = []ReadConfig{
+		{FC: 3, Address: 100, Quantity: 10, IntervalMs: 1000},
+		{FC: 3, Address: 100, Quantity: 10, IntervalMs: 2000}, // same FC+Addr+Qty, different interval
+	}
+	if err := Validate(cfg); err == nil {
+		t.Error("expected error for duplicate reads (same FC, Address, Quantity)")
+	}
+}
+
+func TestValidateDuplicateReadsExactMatch(t *testing.T) {
+	// Two completely identical reads must be rejected.
+	cfg := validBaseConfig()
+	cfg.Replicator.Units[0].Reads = []ReadConfig{
+		{FC: 1, Address: 0, Quantity: 8, IntervalMs: 500},
+		{FC: 1, Address: 0, Quantity: 8, IntervalMs: 500},
+	}
+	if err := Validate(cfg); err == nil {
+		t.Error("expected error for fully identical duplicate reads")
+	}
+}
+
+func TestValidateNonDuplicateReadsAllowed(t *testing.T) {
+	// Reads that differ in at least one of FC, Address, or Quantity must pass.
+	cfg := validBaseConfig()
+	cfg.Replicator.Units[0].Reads = []ReadConfig{
+		{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000},
+		{FC: 3, Address: 10, Quantity: 10, IntervalMs: 1000}, // different address
+		{FC: 4, Address: 0, Quantity: 10, IntervalMs: 1000},  // different FC
+		{FC: 3, Address: 0, Quantity: 20, IntervalMs: 1000},  // different quantity
+	}
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected no error for non-duplicate reads, got: %v", err)
+	}
+}
+
+func TestValidateDuplicateReadsDifferentDevicesAllowed(t *testing.T) {
+	// Two different devices may have identical reads — no cross-device check.
+	cfg := &Config{
+		Replicator: ReplicatorConfig{
+			Units: []UnitConfig{
+				{
+					ID:     "dev1",
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 1, Mode: TargetModeB},
+				},
+				{
+					ID:     "dev2",
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 2, Mode: TargetModeB},
+				},
+			},
+		},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected no error for identical reads on different devices, got: %v", err)
+	}
+}

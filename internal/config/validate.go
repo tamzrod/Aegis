@@ -95,6 +95,9 @@ func validateUnitConfig(u UnitConfig) error {
 			return fmt.Errorf("reads[%d]: interval_ms must be > 0", j)
 		}
 	}
+	if err := validateDuplicateReads(u.Reads); err != nil {
+		return err
+	}
 
 	// Target
 	target := u.Target
@@ -129,6 +132,28 @@ func validateUnitConfig(u UnitConfig) error {
 		return fmt.Errorf("target.mode: unknown value %q (valid: A, B, C)", target.Mode)
 	}
 
+	return nil
+}
+
+// validateDuplicateReads returns an error if any two reads in the slice share
+// the same (FC, Address, Quantity) triple. Interval is not part of the check.
+func validateDuplicateReads(reads []ReadConfig) error {
+	type readKey struct {
+		fc       uint8
+		address  uint16
+		quantity uint16
+	}
+	seen := make(map[readKey]int) // key → first index
+	for j, r := range reads {
+		key := readKey{fc: r.FC, address: r.Address, quantity: r.Quantity}
+		if prev, exists := seen[key]; exists {
+			return fmt.Errorf(
+				"reads[%d]: Duplicate read detected: FC%d Address %d Quantity %d already exists at reads[%d]",
+				j, r.FC, r.Address, r.Quantity, prev,
+			)
+		}
+		seen[key] = j
+	}
 	return nil
 }
 
