@@ -313,6 +313,11 @@ select.field-input {
   padding: 0.35rem 0.6rem;
 }
 
+.read-row.read-row-duplicate {
+  border-color: #ff6b6b;
+  background: #1a0a0a;
+}
+
 .read-row-text {
   flex: 1;
 }

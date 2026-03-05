@@ -94,6 +94,19 @@ function validateUnitIdConflicts(devices) {
   return null;
 }
 
+// validateDuplicateRead checks whether any read in the list (excluding the entry
+// at excludeIndex, pass -1 to check all) shares the same FC, Address, and Quantity.
+// Returns an object { msg, index } identifying the conflict, or null if none found.
+function validateDuplicateRead(reads, fc, address, quantity, excludeIndex) {
+  for (let i = 0; i < reads.length; i++) {
+    if (i === excludeIndex) continue;
+    if (reads[i].fc === fc && reads[i].address === address && reads[i].quantity === quantity) {
+      return { msg: `Duplicate read detected: FC${fc} Address ${address} Quantity ${quantity} already exists.`, index: i };
+    }
+  }
+  return null;
+}
+
 // validateIPv4Port returns an error message string if value is not a valid strict
 // IPv4:port endpoint, or null if it is valid.
 // Rules: trim whitespace, reject hostnames, octets 0–255, port 1–65535.
@@ -475,18 +488,39 @@ function renderReadsList(device, editIndex) {
       actDiv.appendChild(btnSave);
       actDiv.appendChild(btnCancel);
 
+      const dupErrSpan = document.createElement('span');
+      dupErrSpan.className = 'field-error';
+      dupErrSpan.style.display = 'none';
+
       li.appendChild(fieldDiv);
       li.appendChild(actDiv);
+      li.appendChild(dupErrSpan);
 
       btnSave.addEventListener('click', () => {
         const devIdx = getSelectedDeviceIndex();
         if (devIdx < 0) return;
-        workingConfig.devices[devIdx].reads[i] = {
-          fc:          parseInt(inp['fc'].value,          10) || 1,
-          address:     parseInt(inp['address'].value,     10) || 0,
-          quantity:    parseInt(inp['quantity'].value,    10) || 1,
-          interval_ms: parseInt(inp['interval_ms'].value, 10) || 1000,
-        };
+        const fc          = parseInt(inp['fc'].value,          10) || 1;
+        const address     = parseInt(inp['address'].value,     10) || 0;
+        const quantity    = parseInt(inp['quantity'].value,    10) || 1;
+        const interval_ms = parseInt(inp['interval_ms'].value, 10) || 1000;
+        const dupResult = validateDuplicateRead(
+          workingConfig.devices[devIdx].reads, fc, address, quantity, i
+        );
+        if (dupResult) {
+          dupErrSpan.textContent = dupResult.msg;
+          dupErrSpan.style.display = 'block';
+          // Highlight the conflicting view row.
+          ul.querySelectorAll('li').forEach((rowLi, rowIdx) => {
+            if (rowIdx === dupResult.index) {
+              rowLi.classList.add('read-row-duplicate');
+            } else {
+              rowLi.classList.remove('read-row-duplicate');
+            }
+          });
+          return;
+        }
+        dupErrSpan.style.display = 'none';
+        workingConfig.devices[devIdx].reads[i] = { fc, address, quantity, interval_ms };
         renderReadsList(workingConfig.devices[devIdx]);
       });
 
