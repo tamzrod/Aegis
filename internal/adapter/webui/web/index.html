@@ -54,41 +54,49 @@
         </div>
       </div>
 
-      <div class="workspace-content">
+      <div class="main-layout">
 
-        <div class="workspace-section">
-          <div class="section-title-row">
-            <span class="section-title">Source</span>
-            <div id="src-actions" class="section-actions"></div>
+        <div class="config-panel">
+          <div class="workspace-content">
+
+            <div class="workspace-section">
+              <div class="section-title-row">
+                <span class="section-title">Source</span>
+                <div id="src-actions" class="section-actions"></div>
+              </div>
+              <div class="section-divider"></div>
+              <div id="source-content" class="section-body"></div>
+            </div>
+
+            <div class="workspace-section">
+              <div class="section-title-row">
+                <span class="section-title">Reads</span>
+                <div id="reads-actions" class="section-actions"></div>
+              </div>
+              <div class="section-divider"></div>
+              <div id="reads-content" class="section-body"></div>
+            </div>
+
+            <div class="workspace-section">
+              <div class="section-title-row">
+                <span class="section-title">Target</span>
+                <div id="tgt-actions" class="section-actions"></div>
+              </div>
+              <div class="section-divider"></div>
+              <div id="target-content" class="section-body"></div>
+            </div>
+
           </div>
-          <div class="section-divider"></div>
-          <div id="source-content" class="section-body"></div>
         </div>
 
-        <div class="workspace-section">
-          <div class="section-title-row">
-            <span class="section-title">Reads</span>
-            <div id="reads-actions" class="section-actions"></div>
+        <div class="device-panel">
+          <div class="workspace-section" id="device-status-section" style="display:none">
+            <div class="section-title-row">
+              <span class="section-title">Device Status</span>
+            </div>
+            <div class="section-divider"></div>
+            <div id="device-status-content" class="section-body"></div>
           </div>
-          <div class="section-divider"></div>
-          <div id="reads-content" class="section-body"></div>
-        </div>
-
-        <div class="workspace-section">
-          <div class="section-title-row">
-            <span class="section-title">Target</span>
-            <div id="tgt-actions" class="section-actions"></div>
-          </div>
-          <div class="section-divider"></div>
-          <div id="target-content" class="section-body"></div>
-        </div>
-
-        <div class="workspace-section" id="device-status-section" style="display:none">
-          <div class="section-title-row">
-            <span class="section-title">Device Status</span>
-          </div>
-          <div class="section-divider"></div>
-          <div id="device-status-content" class="section-body"></div>
         </div>
 
       </div>

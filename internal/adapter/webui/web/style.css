@@ -43,6 +43,34 @@ body {
   flex-direction: column;
 }
 
+/* ---- Two-column main layout (config + device status) ---- */
+.main-layout {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+}
+
+.config-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.device-panel {
+  position: sticky;
+  top: 20px;
+  align-self: start;
+}
+
+@media (max-width: 900px) {
+  .main-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 .btn-primary {
   padding: 0.35rem 0.85rem;
   border: 1px solid #2a8bc0;
