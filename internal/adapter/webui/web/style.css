@@ -69,6 +69,7 @@ body {
   position: sticky;
   top: 20px;
   align-self: start;
+  max-width: 360px;
 }
 
 @media (max-width: 900px) {
@@ -496,6 +497,7 @@ select.field-input {
 }
 
 .ds-poll-perf-bar-wrap {
+  width: 100%;
   background: #2d2d4e;
   border-radius: 3px;
   height: 8px;

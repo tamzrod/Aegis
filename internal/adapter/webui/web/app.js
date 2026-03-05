@@ -649,6 +649,11 @@ let _deviceStatusTimer = null;
 const SPARKLINE_MAX = 20;
 let _latencyHistory = [];
 
+// Cached last-valid diagnostic values — updated only when a positive reading arrives.
+let _diagLastMs = 0;
+let _diagAvgMs  = 0;
+let _diagMaxMs  = 0;
+
 // healthColor returns a CSS class name matching the health string.
 function healthColor(health) {
   switch ((health || '').toUpperCase()) {
@@ -784,13 +789,23 @@ function renderDeviceDiagnostics(data) {
   if (!data) {
     section.style.display = 'none';
     content.innerHTML = '';
+    // Reset cache when device goes offline.
+    _diagLastMs = 0;
+    _diagAvgMs  = 0;
+    _diagMaxMs  = 0;
     return;
   }
   section.style.display = '';
 
-  const lastMs = data.last_poll_ms ?? 0;
-  const avgMs  = data.avg_poll_ms  ?? 0;
-  const maxMs  = data.max_poll_ms  ?? 0;
+  // Only update cached values when the incoming reading is positive — this
+  // prevents UI flicker when a poll cycle returns undefined/zero temporarily.
+  if ((data.last_poll_ms ?? 0) > 0) _diagLastMs = data.last_poll_ms;
+  if ((data.avg_poll_ms  ?? 0) > 0) _diagAvgMs  = data.avg_poll_ms;
+  if ((data.max_poll_ms  ?? 0) > 0) _diagMaxMs  = data.max_poll_ms;
+
+  const lastMs = _diagLastMs;
+  const avgMs  = _diagAvgMs;
+  const maxMs  = _diagMaxMs;
 
   // Build the diagnostics table.
   const table = document.createElement('table');
@@ -941,8 +956,11 @@ function renderDevice(device) {
   const statusObj = deviceStatuses[device.key] || { status: 'offline' };
   renderDeviceSummaryCard(device, statusObj.status);
 
-  // Reset latency history when switching devices.
+  // Reset latency history and diagnostics cache when switching devices.
   _latencyHistory = [];
+  _diagLastMs = 0;
+  _diagAvgMs  = 0;
+  _diagMaxMs  = 0;
 
   const tgt = device.target || {};
   startDeviceStatusPolling(tgt.port, tgt.status_unit_id, tgt.status_slot);
