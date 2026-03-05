@@ -400,3 +400,109 @@ func TestValidateDuplicateReadsDifferentDevicesAllowed(t *testing.T) {
 		t.Errorf("expected no error for identical reads on different devices, got: %v", err)
 	}
 }
+
+func TestValidateStatusUnitIDConsistentOnSamePort(t *testing.T) {
+	// Two units on the same port sharing the same status_unit_id must pass.
+	slot0 := uint16(0)
+	slot1 := uint16(1)
+	suid := uint16(100)
+	cfg := &Config{
+		Replicator: ReplicatorConfig{
+			Units: []UnitConfig{
+				{
+					ID:     "plc1",
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 1, StatusUnitID: &suid, StatusSlot: &slot0, Mode: TargetModeB},
+				},
+				{
+					ID:     "plc2",
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 50, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 2, StatusUnitID: &suid, StatusSlot: &slot1, Mode: TargetModeB},
+				},
+			},
+		},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected no error when two units on the same port share the same status_unit_id, got: %v", err)
+	}
+}
+
+func TestValidateStatusUnitIDMismatchOnSamePort(t *testing.T) {
+	// Two units on the same port with different status_unit_ids must be rejected.
+	slot0 := uint16(0)
+	slot1 := uint16(1)
+	suid1 := uint16(100)
+	suid2 := uint16(200)
+	cfg := &Config{
+		Replicator: ReplicatorConfig{
+			Units: []UnitConfig{
+				{
+					ID:     "plc1",
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 1, StatusUnitID: &suid1, StatusSlot: &slot0, Mode: TargetModeB},
+				},
+				{
+					ID:     "plc2",
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 50, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 2, StatusUnitID: &suid2, StatusSlot: &slot1, Mode: TargetModeB},
+				},
+			},
+		},
+	}
+	if err := Validate(cfg); err == nil {
+		t.Error("expected error when two units on the same port have different status_unit_ids")
+	}
+}
+
+func TestValidateStatusUnitIDDifferentPortsIndependent(t *testing.T) {
+	// Units on different ports may have different status_unit_ids — no cross-port constraint.
+	slot0 := uint16(0)
+	suid1 := uint16(100)
+	suid2 := uint16(200)
+	cfg := &Config{
+		Replicator: ReplicatorConfig{
+			Units: []UnitConfig{
+				{
+					ID:     "plc1",
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 1, StatusUnitID: &suid1, StatusSlot: &slot0, Mode: TargetModeB},
+				},
+				{
+					ID:     "plc2",
+					Source: SourceConfig{Endpoint: "192.168.1.2:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 50, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 503, UnitID: 1, StatusUnitID: &suid2, StatusSlot: &slot0, Mode: TargetModeB},
+				},
+			},
+		},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected no error when units on different ports have different status_unit_ids, got: %v", err)
+	}
+}
+
+func TestValidateStatusUnitIDOnlyOneDeviceOnPort(t *testing.T) {
+	// A single unit with a status_unit_id must pass (nothing to conflict with).
+	slot0 := uint16(0)
+	suid := uint16(100)
+	cfg := &Config{
+		Replicator: ReplicatorConfig{
+			Units: []UnitConfig{
+				{
+					ID:     "plc1",
+					Source: SourceConfig{Endpoint: "192.168.1.1:502", TimeoutMs: 1000},
+					Reads:  []ReadConfig{{FC: 3, Address: 0, Quantity: 10, IntervalMs: 1000}},
+					Target: TargetConfig{Port: 502, UnitID: 1, StatusUnitID: &suid, StatusSlot: &slot0, Mode: TargetModeB},
+				},
+			},
+		},
+	}
+	if err := Validate(cfg); err != nil {
+		t.Errorf("expected no error for single unit with status_unit_id, got: %v", err)
+	}
+}
