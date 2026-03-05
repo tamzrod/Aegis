@@ -175,7 +175,7 @@ replicator:
           quantity: 10
           interval_ms: 5000
       target:
-        listener_id: "primary"
+        port: 502
         unit_id: 1
         mode: "B"          # "A", "B" (default), or "C"
 ```

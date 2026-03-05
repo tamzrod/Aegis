@@ -142,10 +142,22 @@ returning control to the caller.
 
 ## Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET`  | `/api/runtime/status`    | `{ running, state, error }` |
-| `GET`  | `/api/runtime/listeners` | Per-port `[{ port, status, error }]` |
-| `POST` | `/api/runtime/start`     | Start engine; 409 if not STOPPED |
-| `POST` | `/api/runtime/stop`      | Stop engine; 409 if not RUNNING |
-| `POST` | `/api/restart`           | Restart (reload config + rebuild) |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/login`                 | None    | Validate credentials; set session cookie. Returns `password_change_required` flag when default password is active. |
+| `POST` | `/api/logout`                | Session | Invalidate session cookie; redirect to `/login`. |
+| `POST` | `/api/change-password`       | Session | Hash and persist a new password; clear the password-change-required flag. |
+| `GET`  | `/api/runtime/status`        | Session | `{ running, state, error }` |
+| `GET`  | `/api/runtime/listeners`     | Session | Per-port `[{ port, status, error }]` |
+| `GET`  | `/api/runtime/devices`       | Session | Per-device `[{ id, status, polling }]` |
+| `GET`  | `/api/device/status`         | Session | Decoded status block for one device. Query params: `port`, `unit_id`, `slot`. |
+| `POST` | `/api/runtime/start`         | Session | Start engine; 409 if not STOPPED. |
+| `POST` | `/api/runtime/stop`          | Session | Stop engine; 409 if not RUNNING. |
+| `POST` | `/api/restart`               | Session | Reload config from disk and rebuild runtime. |
+| `POST` | `/api/reload`                | Session | Re-read config file, validate, and rebuild runtime. |
+| `GET`  | `/api/config/view`           | Session | Config as a structured JSON view model (device list). |
+| `PUT`  | `/api/config/apply`          | Session | Merge a JSON view model into the active config, validate, write to disk, and rebuild. |
+| `GET`  | `/api/config/raw`            | Session | Active config as `text/yaml`. |
+| `PUT`  | `/api/config/raw`            | Session | Replace config with raw YAML body; validate, write to disk, and rebuild. |
+| `GET`  | `/api/config/export`         | Session | Download active `config.yaml` as an attachment. |
+| `POST` | `/api/config/import`         | Session | Upload raw YAML; validate, write to disk, and rebuild. |

@@ -43,7 +43,7 @@ Aegis supports three startup scenarios, determined at launch time:
 |---|---|---|
 | `aegis <config.yaml>` | Yes | Load specified file; start engine + WebUI (if `webui.enabled: true`). |
 | `aegis` | Yes (`config.yaml` in working dir) | Load `config.yaml`; start engine + WebUI (if `webui.enabled: true`). |
-| `aegis` | No `config.yaml` found | Start WebUI only on `:8080`; runtime (replicator + adapters) remains disabled. |
+| `aegis` | No `config.yaml` found | Create a minimal `config.yaml` (empty units list); start WebUI only on `:8080`; runtime (replicator + adapters) remains disabled until a valid config is applied. |
 
 In all cases the binary does **not** terminate on a missing config. The missing-config state is treated as a first-boot condition, not a fatal error.
 
@@ -54,10 +54,11 @@ In all cases the binary does **not** terminate on a missing config. The missing-
 On a fresh device with no configuration file:
 
 1. Start Aegis (no arguments): `./aegis`
-2. Open the WebUI at **http://localhost:8080**.
-3. Use the UI to add devices (units) and define their read blocks.
-4. Click **"Apply Config"** to save the configuration and write `config.yaml` to disk.
-5. The runtime (replicator + Modbus TCP adapters) starts automatically; the gateway begins serving Modbus data.
+2. Aegis automatically creates a minimal `config.yaml` (with an empty units list) in the working directory.
+3. Open the WebUI at **http://localhost:8080**. Log in with the default credentials (`admin` / `admin`). You will be prompted to change the password on first login.
+4. Use the UI to add devices (units) and define their read blocks.
+5. Click **"Apply Config"** to save the configuration and write `config.yaml` to disk.
+6. The runtime (replicator + Modbus TCP adapters) starts automatically; the gateway begins serving Modbus data.
 
 No manual file editing or process restart is required for initial setup.
 
@@ -210,7 +211,10 @@ main()
   ├─1─ os.Args[1] (optional) — config file path; defaults to "config.yaml"
   │
   ├─2─ os.Stat(cfgPath)
-  │      file not found → log "no config file found, starting WebUI only"
+  │      file not found → log "config.yaml not found, creating new configuration"
+  │                        config.CreateMinimal(cfgPath) — writes minimal config.yaml to disk
+  │                          (content: "replicator:\n  units: []\n" — empty units list)
+  │                        rt.activeConfigYAML = MinimalConfigYAML
   │                        startWebUI = true  [→ skip to step 6]
   │      file found     → continue to step 3
   │
@@ -235,8 +239,9 @@ main()
   │          builds Poller (lazy connect, no initial dial)
   │          builds WritePlan → StoreWriter
   │      for each unique target.Port across all replicator units:
-  │        adapter.NewServer(":PORT", store)
-  │        go srv.ListenAndServe()
+  │        net.Listen("tcp", ":PORT")  ← pre-bind synchronously; error returned immediately
+  │        adapter.NewServerWithListener(":PORT", ln, store, authority, debug)
+  │        go srv.Serve()
   │      for each engine.Unit:
   │        out := make(chan PollResult, 8)
   │        go orchestrator(out)
@@ -244,7 +249,7 @@ main()
   │      startWebUI = cfg.WebUI.Enabled
   │
   ├─6─ WebUI startup  [conditional on startWebUI == true]
-  │      webui.NewServer(webuiListen, rt)
+  │      webui.NewServer(webuiListen, rt, authCfg)
   │      go srv.ListenAndServe()
   │      log "webui adapter starting on <addr>"
   │
@@ -390,7 +395,7 @@ The YAML file is loaded exactly once at startup. There is no hot-reload mechanis
 | Validation failure | `config.Validate` returns error | **Recoverable** — `rt.SetError(err)`; WebUI shows error; runtime disabled. |
 | Memory store build failure | `config.BuildMemStore` returns error | **Recoverable** — `rt.SetError(err)`; WebUI shows error; runtime disabled. |
 | Engine build failure | `engine.Build` returns error | **Recoverable** — `rt.SetError(err)`; WebUI shows error; runtime disabled. |
-| Adapter listen failure | `net.Listen` fails inside goroutine | `log.Fatalf` → exit code 1 (WebUI may still be running). |
+| Adapter bind failure | `net.Listen` returns an error in `rebuild()` | **Recoverable** — `rt.SetError(err)`; the error is surfaced to the WebUI error bar; the WebUI remains accessible; no process exit. |
 
 Failures at the config-loading and validation stages are **non-fatal**. The process continues in WebUI-only (degraded) mode, giving the operator the opportunity to correct the configuration through the browser interface without restarting the device. Only failures that prevent the runtime network adapters from binding their ports result in a fatal log and process exit.
 

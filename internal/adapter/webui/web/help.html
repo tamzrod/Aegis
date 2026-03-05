@@ -27,10 +27,13 @@
       <div class="help-nav__title">Documentation</div>
       <ul class="help-nav__list">
         <li><a class="help-nav__link" href="#overview">Overview</a></li>
+        <li><a class="help-nav__link" href="#authentication">Authentication</a></li>
+        <li><a class="help-nav__link" href="#runtime-controls">Runtime Controls</a></li>
         <li><a class="help-nav__link" href="#device-setup">Device Setup</a></li>
         <li><a class="help-nav__link" href="#source-configuration">Source Configuration</a></li>
         <li><a class="help-nav__link" href="#reads-configuration">Reads Configuration</a></li>
         <li><a class="help-nav__link" href="#target-configuration">Target Configuration</a></li>
+        <li><a class="help-nav__link" href="#authority-modes">Authority Modes</a></li>
         <li><a class="help-nav__link" href="#device-status">Device Status</a></li>
         <li><a class="help-nav__link" href="#status-registers">Status Registers (Modbus)</a></li>
         <li><a class="help-nav__link" href="#troubleshooting">Troubleshooting</a></li>
@@ -51,11 +54,92 @@
         <h2 class="help-section__heading">Overview</h2>
         <div class="section-divider"></div>
         <p class="help-section__body">
-          Aegis is a Modbus data replication and fan-out system designed for industrial telemetry, SCADA integration, and edge data distribution.
+          Aegis is a single-binary Modbus memory backplane with an integrated replication engine. It shields downstream Modbus clients from upstream device instability by holding the last known good register values in an in-process memory store.
         </p>
         <p class="help-section__body">
-          Aegis polls Modbus devices and republishes the data through configurable Modbus servers.
+          Aegis polls one or more upstream Modbus TCP devices and republishes the data through configurable Modbus TCP servers. Downstream clients always read from the in-process store — not directly from the upstream devices.
         </p>
+      </section>
+
+      <!-- Authentication -->
+      <section class="help-section" id="authentication">
+        <h2 class="help-section__heading">Authentication</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">
+          All WebUI pages and API endpoints require a valid login session. Authentication is always enforced.
+        </p>
+        <h3 class="help-section__subheading">Default Credentials</h3>
+        <p class="help-section__body">
+          When no <code class="help-code">auth</code> section is present in <code class="help-code">config.yaml</code>, the default credentials are:
+        </p>
+        <table class="help-table">
+          <tbody>
+            <tr><td><span class="help-field">Username</span></td><td><code class="help-code">admin</code></td></tr>
+            <tr><td><span class="help-field">Password</span></td><td><code class="help-code">admin</code></td></tr>
+          </tbody>
+        </table>
+        <p class="help-section__body">
+          On first login with the default password, you will be redirected to the Change Password page. You must set a new password before accessing the dashboard.
+        </p>
+        <h3 class="help-section__subheading">Custom Credentials</h3>
+        <p class="help-section__body">
+          To set custom credentials, add an <code class="help-code">auth</code> section to <code class="help-code">config.yaml</code>:
+        </p>
+        <pre class="help-code-block">auth:
+  username: admin
+  password_hash: "$2a$10$..."</pre>
+        <p class="help-section__body">
+          <code class="help-code">password_hash</code> must be a bcrypt hash. Generate one with:
+          <code class="help-code">htpasswd -nbB admin mypassword</code>
+        </p>
+        <h3 class="help-section__subheading">Sessions</h3>
+        <p class="help-section__body">
+          Sessions are stored in memory only and expire after 8 hours. All active sessions are lost when the process restarts.
+        </p>
+      </section>
+
+      <!-- Runtime Controls -->
+      <section class="help-section" id="runtime-controls">
+        <h2 class="help-section__heading">Runtime Controls</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">The System Controls bar at the top of the dashboard provides the following actions:</p>
+        <table class="help-table">
+          <thead>
+            <tr><th>Control</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="help-field">Apply Config</span></td>
+              <td>Saves the current working configuration to disk and atomically restarts the runtime with the new config. The WebUI server itself is never restarted.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Restart Runtime</span></td>
+              <td>Reloads <code class="help-code">config.yaml</code> from disk and rebuilds the runtime. Useful after manually editing the config file.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Export Config</span></td>
+              <td>Downloads the currently active <code class="help-code">config.yaml</code> to your browser.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Import Config</span></td>
+              <td>Uploads a <code class="help-code">.yaml</code> or <code class="help-code">.yml</code> file, validates it, writes it to disk, and restarts the runtime.</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3 class="help-section__subheading">Runtime States</h3>
+        <p class="help-section__body">The status indicator in the header reflects the current engine state:</p>
+        <table class="help-table">
+          <thead>
+            <tr><th>State</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="help-field">Stopped</span></td><td>No replicator units are running. No Modbus TCP listener is active.</td></tr>
+            <tr><td><span class="help-field">Starting</span></td><td>The runtime is being built and port binding is in progress.</td></tr>
+            <tr><td><span class="help-field">Running</span></td><td>All pollers and Modbus TCP adapters are active.</td></tr>
+            <tr><td><span class="help-field">Stopping</span></td><td>The runtime is shutting down gracefully.</td></tr>
+            <tr><td><span class="help-field">Error</span></td><td>The runtime encountered an error (e.g. config validation failure, port binding failure). The error message is shown below the status indicator.</td></tr>
+          </tbody>
+        </table>
       </section>
 
       <!-- Device Setup -->
@@ -169,11 +253,11 @@
             </tr>
             <tr>
               <td><span class="help-field">Unit ID</span></td>
-              <td>Modbus unit ID exposed by Aegis.</td>
+              <td>Modbus unit ID exposed by Aegis for data registers. Range: 1–255.</td>
             </tr>
             <tr>
               <td><span class="help-field">Status Unit ID</span></td>
-              <td>Unit ID used for the status memory block.</td>
+              <td>Unit ID used for the status memory block. Must differ from the data Unit ID on the same port. Defaults to <code class="help-code">100</code> when not specified.</td>
             </tr>
             <tr>
               <td><span class="help-field">Status Slot</span></td>
@@ -182,15 +266,65 @@
                 Each device must have a unique Status Slot within the same Status Unit ID.
               </td>
             </tr>
+            <tr>
+              <td><span class="help-field">Mode</span></td>
+              <td>
+                Authority mode controlling how Aegis handles client reads and writes:
+                <ul class="help-list help-list--compact">
+                  <li><code class="help-code">A</code> <strong>(Standalone)</strong> — Client writes allowed; reads always served regardless of upstream health.</li>
+                  <li><code class="help-code">B</code> <strong>(Strict)</strong> — Default. Client writes rejected. Reads are gated by upstream health: returns <code class="help-code">0x0B</code> on timeout, forwards upstream exception codes.</li>
+                  <li><code class="help-code">C</code> <strong>(Buffered)</strong> — Client writes rejected; reads always served even when upstream is unhealthy. Health is still tracked and reported.</li>
+                </ul>
+              </td>
+            </tr>
           </tbody>
         </table>
+      </section>
+
+      <!-- Device Status -->
+      <section class="help-section" id="authority-modes">
+        <h2 class="help-section__heading">Authority Modes</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">
+          The Target Mode field controls how Aegis handles Modbus client read and write requests. Authority is defined per device (per replicator unit), not globally.
+        </p>
+        <table class="help-table">
+          <thead>
+            <tr>
+              <th>Mode</th>
+              <th>Writes</th>
+              <th>Reads</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code class="help-code">A</code> — Standalone</td>
+              <td>Allowed</td>
+              <td>Always served; upstream health is not checked.</td>
+            </tr>
+            <tr>
+              <td><code class="help-code">B</code> — Strict (default)</td>
+              <td>Rejected (<code class="help-code">0x01</code>)</td>
+              <td>Gated by upstream health: <code class="help-code">0x0B</code> on timeout; upstream exception code forwarded on Modbus error.</td>
+            </tr>
+            <tr>
+              <td><code class="help-code">C</code> — Buffered</td>
+              <td>Rejected (<code class="help-code">0x01</code>)</td>
+              <td>Always served (last known good data); upstream health is still tracked and reported.</td>
+            </tr>
+          </tbody>
+        </table>
+        <h3 class="help-section__subheading">Read Coverage</h3>
+        <p class="help-section__body">
+          Regardless of mode, reads that fall outside the bounding range of all configured read blocks return <code class="help-code">0x02</code> (Illegal Data Address). In Mode B, reads that fall within the bounding range but are not covered by any read block also return <code class="help-code">0x02</code>; in Modes A and C they return zero-filled values.
+        </p>
       </section>
 
       <!-- Device Status -->
       <section class="help-section" id="device-status">
         <h2 class="help-section__heading">Device Status</h2>
         <div class="section-divider"></div>
-        <p class="help-section__body">The status panel shows real-time health metrics for each device.</p>
+        <p class="help-section__body">The Device Status panel shows real-time health metrics read from the in-process status memory block.</p>
         <table class="help-table">
           <thead>
             <tr>
@@ -201,27 +335,46 @@
           <tbody>
             <tr>
               <td><span class="help-field">Health</span></td>
-              <td>Indicates current device health state.</td>
+              <td>
+                Current device health state:
+                <ul class="help-list help-list--compact">
+                  <li><strong>UNKNOWN</strong> — not yet polled since startup.</li>
+                  <li><strong>OK</strong> — last poll succeeded.</li>
+                  <li><strong>ERROR</strong> — last poll failed (timeout, exception, or disconnection).</li>
+                </ul>
+              </td>
             </tr>
             <tr>
               <td><span class="help-field">Online</span></td>
-              <td>Shows if the device is responding.</td>
+              <td>True when health is OK (last poll succeeded).</td>
             </tr>
             <tr>
               <td><span class="help-field">Requests Total</span></td>
-              <td>Total Modbus requests sent to the device.</td>
+              <td>Lifetime count of poll requests sent to the upstream device.</td>
             </tr>
             <tr>
               <td><span class="help-field">Responses Valid</span></td>
-              <td>Successful responses received.</td>
+              <td>Lifetime count of successful poll responses received.</td>
             </tr>
             <tr>
               <td><span class="help-field">Timeouts</span></td>
-              <td>Number of request timeouts.</td>
+              <td>Lifetime count of poll timeouts.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Transport Errors</span></td>
+              <td>Lifetime count of transport-level errors (connection resets, broken pipes, EOF, etc.).</td>
             </tr>
             <tr>
               <td><span class="help-field">Seconds in Error</span></td>
-              <td>How long the device has been in an error state.</td>
+              <td>Seconds continuously in a non-OK health state. Reset to 0 on recovery.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Consecutive Fail (current)</span></td>
+              <td>Current streak of consecutive failed polls.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Consecutive Fail (max)</span></td>
+              <td>Lifetime maximum consecutive failure streak.</td>
             </tr>
           </tbody>
         </table>
@@ -294,6 +447,29 @@
           </tbody>
         </table>
 
+        <h3 class="help-section__subheading">Register Layout</h3>
+        <p class="help-section__body">All offsets are relative to <code class="help-code">slot_start = slot_number × 30</code>.</p>
+        <table class="help-table">
+          <thead>
+            <tr><th>Offset</th><th>Name</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>0</td><td>Header Word 0</td><td>Magic bytes — always <code class="help-code">0x4147</code></td></tr>
+            <tr><td>1</td><td>Header Word 1</td><td>Magic + block index — always <code class="help-code">0x53XX</code> where the low byte contains the slot index (0–255)</td></tr>
+            <tr><td>2</td><td>Health Code</td><td><code class="help-code">0</code>=Unknown, <code class="help-code">1</code>=OK, <code class="help-code">2</code>=Error</td></tr>
+            <tr><td>3</td><td>Last Error Code</td><td>Modbus exception code or transport error; <code class="help-code">0</code> when healthy</td></tr>
+            <tr><td>4</td><td>Seconds In Error</td><td>Seconds continuously in a non-OK state; reset to 0 on recovery</td></tr>
+            <tr><td>5–12</td><td>Device Name (8 registers)</td><td>16-character ASCII device name, 2 characters per register (high byte first), character pairs 1–2 through 15–16</td></tr>
+            <tr><td>13–19</td><td>Reserved</td><td>Always zero. Reserved for future protocol use.</td></tr>
+            <tr><td>20–21</td><td>Requests Total</td><td>32-bit lifetime poll request count (low word at 20, high word at 21)</td></tr>
+            <tr><td>22–23</td><td>Responses Valid</td><td>32-bit lifetime successful poll count</td></tr>
+            <tr><td>24–25</td><td>Timeouts</td><td>32-bit lifetime timeout count</td></tr>
+            <tr><td>26–27</td><td>Transport Errors</td><td>32-bit lifetime transport error count</td></tr>
+            <tr><td>28</td><td>Consecutive Fail (curr)</td><td>Current consecutive failure streak</td></tr>
+            <tr><td>29</td><td>Consecutive Fail (max)</td><td>Lifetime maximum consecutive failure streak</td></tr>
+          </tbody>
+        </table>
+
         <h3 class="help-section__subheading">Example Modbus Read</h3>
         <p class="help-section__body">To read the status of Slot 2:</p>
         <table class="help-table">
@@ -304,7 +480,7 @@
             <tr><td><span class="help-field">Quantity</span></td><td><code class="help-code">30</code></td></tr>
           </tbody>
         </table>
-        <p class="help-section__body">This will return all status registers for that device.</p>
+        <p class="help-section__body">This will return all 30 status registers for that device.</p>
 
         <h3 class="help-section__subheading">Purpose</h3>
         <p class="help-section__body">
@@ -327,13 +503,25 @@
         <div class="section-divider"></div>
         <dl class="help-dl">
           <dt class="help-dl__term">Device not responding</dt>
-          <dd class="help-dl__desc">Check endpoint IP and port.</dd>
+          <dd class="help-dl__desc">Check the endpoint IP and port. The endpoint must be a valid IPv4 address (e.g. <code class="help-code">192.168.1.100:502</code>); hostnames are not supported.</dd>
 
           <dt class="help-dl__term">Invalid responses</dt>
-          <dd class="help-dl__desc">Verify correct unit ID and register addresses.</dd>
+          <dd class="help-dl__desc">Verify the correct source unit ID and register addresses.</dd>
 
           <dt class="help-dl__term">Timeout errors</dt>
-          <dd class="help-dl__desc">Increase timeout or verify network connectivity.</dd>
+          <dd class="help-dl__desc">Increase the source timeout or verify network connectivity.</dd>
+
+          <dt class="help-dl__term">Clients receive 0x0B (Gateway Target Device Failed to Respond)</dt>
+          <dd class="help-dl__desc">The device is in Mode B (Strict) and the upstream device is not responding. Check upstream device health or switch to Mode C (Buffered) if stale data is acceptable.</dd>
+
+          <dt class="help-dl__term">Clients receive 0x01 (Illegal Function) on writes</dt>
+          <dd class="help-dl__desc">Writes are rejected in Mode B and Mode C. Switch to Mode A (Standalone) to allow client writes.</dd>
+
+          <dt class="help-dl__term">Runtime fails to start (port binding error)</dt>
+          <dd class="help-dl__desc">Another process is already using the configured Modbus TCP port. Free the port or configure a different target port.</dd>
+
+          <dt class="help-dl__term">Forgot password / locked out</dt>
+          <dd class="help-dl__desc">Remove the <code class="help-code">auth</code> section from <code class="help-code">config.yaml</code> and restart Aegis. The default credentials (<code class="help-code">admin</code> / <code class="help-code">admin</code>) will be restored and you will be prompted to set a new password.</dd>
         </dl>
       </section>
 
