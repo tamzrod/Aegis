@@ -48,6 +48,14 @@ type RuntimeManager struct {
 	// It is replaced on each rebuild and read by DeviceStatuses.
 	healthStore *engine.BlockHealthStore
 
+	// latencyTracker records per-unit poll latency statistics.
+	// It is replaced on each rebuild and read by ReadDeviceStatus.
+	latencyTracker *PollLatencyTracker
+
+	// statusUnitIndex maps (port, statusUnitID, statusSlot) to unit ID.
+	// It is built during rebuild and used by ReadDeviceStatus for O(1) lookup.
+	statusUnitIndex map[statusUnitKey]string
+
 	// store is the in-process register store for the current runtime.
 	// It is replaced on each rebuild and read by ReadDeviceStatus.
 	store core.Store
@@ -221,12 +229,21 @@ func (r *RuntimeManager) DeviceStatuses() []runtimepkg.DeviceStatus {
 	return out
 }
 
+// statusUnitKey uniquely identifies a device status block by its Modbus addressing tuple.
+type statusUnitKey struct {
+	port         uint16
+	statusUnitID uint16
+	statusSlot   uint16
+}
+
 // ReadDeviceStatus reads and decodes the status register block for the device
 // identified by (port, statusUnitID, statusSlot) from the in-process store.
 // Returns an error if the store is not initialised or the memory is not found.
 func (r *RuntimeManager) ReadDeviceStatus(port, statusUnitID, statusSlot uint16) (*runtimepkg.StatusBlockSnapshot, error) {
 	r.mu.Lock()
 	st := r.store
+	lt := r.latencyTracker
+	unitID := r.statusUnitIndex[statusUnitKey{port, statusUnitID, statusSlot}]
 	r.mu.Unlock()
 
 	if st == nil {
@@ -255,6 +272,11 @@ func (r *RuntimeManager) ReadDeviceStatus(port, statusUnitID, statusSlot uint16)
 	healthStr := healthCodeToString(snap.Health)
 	online := snap.Health == engine.HealthOK
 
+	var lastMs, avgMs, maxMs uint32
+	if lt != nil && unitID != "" {
+		lastMs, avgMs, maxMs = lt.Get(unitID)
+	}
+
 	return &runtimepkg.StatusBlockSnapshot{
 		Health:              healthStr,
 		Online:              online,
@@ -265,6 +287,9 @@ func (r *RuntimeManager) ReadDeviceStatus(port, statusUnitID, statusSlot uint16)
 		TransportErrors:     snap.TransportErrorsTotal,
 		ConsecutiveFailCurr: snap.ConsecutiveFailCurr,
 		ConsecutiveFailMax:  snap.ConsecutiveFailMax,
+		LastPollMs:          lastMs,
+		AvgPollMs:           avgMs,
+		MaxPollMs:           maxMs,
 	}, nil
 }
 
@@ -503,6 +528,7 @@ func (r *RuntimeManager) rebuild(cfg *config.Config, yamlBytes []byte) error {
 	}
 
 	healthStore := engine.NewBlockHealthStore()
+	latencyTracker := NewPollLatencyTracker()
 
 	// Create a new runtime context derived from the process context.
 	// Cancelling runtimeCtx stops pollers and orchestrators without
@@ -584,7 +610,7 @@ func (r *RuntimeManager) rebuild(cfg *config.Config, yamlBytes []byte) error {
 		r.wg.Add(2)
 		go func(id string, cs counterSource, pw pollWriter, hw blockHealthWriter, ch <-chan engine.PollResult) {
 			defer r.wg.Done()
-			runOrchestrator(runtimeCtx, id, cs, pw, hw, ch)
+			runOrchestrator(runtimeCtx, id, cs, pw, hw, ch, latencyTracker)
 		}(u.Poller.UnitID(), u.Poller, u.Writer, healthStore, out)
 
 		go func(p *engine.Poller, ch chan<- engine.PollResult) {
@@ -598,8 +624,29 @@ func (r *RuntimeManager) rebuild(cfg *config.Config, yamlBytes []byte) error {
 	r.activeConfigYAML = yamlBytes
 	r.listenerStatuses = listenerStatuses
 	r.healthStore = healthStore
+	r.latencyTracker = latencyTracker
+	r.statusUnitIndex = buildStatusUnitIndex(cfg)
 	r.store = store
 	r.activeCfg = cfg
 	r.state.SetRunning()
 	return nil
+}
+
+// buildStatusUnitIndex constructs a map from (port, statusUnitID, statusSlot) → unit ID
+// so that ReadDeviceStatus can resolve the unit ID in O(1) without iterating all units.
+func buildStatusUnitIndex(cfg *config.Config) map[statusUnitKey]string {
+	idx := make(map[statusUnitKey]string, len(cfg.Replicator.Units))
+	for _, u := range cfg.Replicator.Units {
+		tgt := u.Target
+		if tgt.StatusUnitID == nil || tgt.StatusSlot == nil {
+			continue
+		}
+		k := statusUnitKey{
+			port:         tgt.Port,
+			statusUnitID: *tgt.StatusUnitID,
+			statusSlot:   *tgt.StatusSlot,
+		}
+		idx[k] = u.ID
+	}
+	return idx
 }
