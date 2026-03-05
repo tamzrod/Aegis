@@ -75,6 +75,14 @@ type PasswordUpdater interface {
 	UpdatePasswordHash(hash string) error
 }
 
+// ViewerReader is an optional extension for reading raw register or coil values
+// from the in-process store for a given device, function code, start address, and quantity.
+// If the concrete Manager also implements ViewerReader, the GET /api/viewer/read
+// endpoint becomes active and returns live values from the runtime memory.
+type ViewerReader interface {
+	ReadViewerRegisters(deviceKey string, fc uint8, address, quantity uint16) ([]uint16, error)
+}
+
 // Server is the embedded WebUI HTTP server.
 type Server struct {
 	listen string
@@ -107,6 +115,9 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	if pu, ok := mgr.(PasswordUpdater); ok {
 		h.pu = pu
 	}
+	if vr, ok := mgr.(ViewerReader); ok {
+		h.vr = vr
+	}
 
 	// Unprotected routes: login page, login API endpoint, and shared static assets.
 	// Static assets must be public so the login page can load its CSS/JS.
@@ -132,6 +143,9 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	protected.HandleFunc("/help", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, webFS, "help.html")
 	})
+	protected.HandleFunc("/viewer", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "viewer.html")
+	})
 	protected.HandleFunc("/api/change-password", h.handleChangePassword)
 	protected.HandleFunc("/api/config/view", h.handleConfigView)
 	protected.HandleFunc("/api/config/apply", h.handleConfigApply)
@@ -146,6 +160,7 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	protected.HandleFunc("/api/runtime/listeners", h.handleRuntimeListeners)
 	protected.HandleFunc("/api/runtime/devices", h.handleRuntimeDevices)
 	protected.HandleFunc("/api/device/status", h.handleDeviceStatus)
+	protected.HandleFunc("/api/viewer/read", h.handleViewerRead)
 	protected.HandleFunc("/api/logout", h.handleLogout)
 	protected.Handle("/", http.FileServer(http.FS(webFS)))
 

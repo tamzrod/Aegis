@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aegis — Data Viewer</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg">
+  <link rel="icon" type="image/png" sizes="96x96" href="/favicon/favicon-96x96.png">
+  <link rel="shortcut icon" href="/favicon/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png">
+  <link rel="manifest" href="/favicon/site.webmanifest">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* ---- Viewer page layout ---- */
+    body.viewer-page {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .viewer-layout {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      padding: 1rem;
+      gap: 1rem;
+    }
+
+    /* ---- Query controls bar ---- */
+    .viewer-controls {
+      background: #0f1220;
+      border: 1px solid #2a2f45;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      gap: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    .viewer-controls__group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .viewer-controls__label {
+      font-size: 0.75rem;
+      color: #888;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .viewer-controls__input {
+      background: #1a1a3a;
+      border: 1px solid #4a4a7a;
+      border-radius: 3px;
+      color: #e0e0e0;
+      padding: 0.3rem 0.5rem;
+      font-size: 0.875rem;
+      min-width: 0;
+    }
+
+    .viewer-controls__input:focus {
+      outline: none;
+      border-color: #4a9eff;
+    }
+
+    select.viewer-controls__input {
+      cursor: pointer;
+    }
+
+    .viewer-controls__input--short {
+      width: 90px;
+    }
+
+    .viewer-controls__input--medium {
+      width: 160px;
+    }
+
+    .viewer-controls__sep {
+      width: 1px;
+      height: 2rem;
+      background: #2a2f45;
+      align-self: flex-end;
+    }
+
+    .viewer-controls__actions {
+      display: flex;
+      align-items: flex-end;
+      gap: 0.5rem;
+    }
+
+    .viewer-controls__refresh {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.82rem;
+      color: #aaa;
+      cursor: pointer;
+      user-select: none;
+      align-self: flex-end;
+      padding-bottom: 0.35rem;
+    }
+
+    .viewer-controls__refresh input[type="checkbox"] {
+      accent-color: #4a9eff;
+      width: 14px;
+      height: 14px;
+      cursor: pointer;
+    }
+
+    /* ---- Endpoint info bar ---- */
+    .viewer-endpoint {
+      font-size: 0.8rem;
+      color: #888;
+      align-self: flex-end;
+      padding-bottom: 0.35rem;
+    }
+
+    .viewer-endpoint span {
+      color: #a0c4ff;
+    }
+
+    /* ---- Register table card ---- */
+    .viewer-card {
+      background: #0f1220;
+      border: 1px solid #2a2f45;
+      border-radius: 6px;
+      flex: 1;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .viewer-card__header {
+      padding: 0.6rem 1rem;
+      border-bottom: 1px solid #2a2f45;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .viewer-card__title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #8aa0ff;
+    }
+
+    .viewer-card__meta {
+      font-size: 0.75rem;
+      color: #666;
+    }
+
+    .viewer-card__body {
+      flex: 1;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #3d3d6e #0d0d1a;
+    }
+
+    .viewer-card__body::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .viewer-card__body::-webkit-scrollbar-track {
+      background: #0d0d1a;
+    }
+
+    .viewer-card__body::-webkit-scrollbar-thumb {
+      background-color: #3d3d6e;
+      border-radius: 3px;
+    }
+
+    /* ---- Register table ---- */
+    .reg-table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.875rem;
+    }
+
+    .reg-table thead {
+      position: sticky;
+      top: 0;
+      background: #0d0d1a;
+      z-index: 1;
+    }
+
+    .reg-table th {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      color: #666;
+      font-weight: 500;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid #2a2f45;
+      white-space: nowrap;
+    }
+
+    .reg-table tbody tr {
+      cursor: pointer;
+      border-bottom: 1px solid #1a1e30;
+      transition: background 0.08s;
+    }
+
+    .reg-table tbody tr:hover {
+      background: #151a2e;
+    }
+
+    .reg-table tbody tr.selected {
+      background: #1a2240;
+    }
+
+    .reg-table td {
+      padding: 0.45rem 0.75rem;
+      vertical-align: top;
+    }
+
+    .reg-table td.col-address {
+      color: #8aa0ff;
+      font-size: 0.875rem;
+      white-space: nowrap;
+    }
+
+    .reg-table td.col-decimal {
+      color: #e0e0e0;
+    }
+
+    .reg-table td.col-hex,
+    .reg-table td.col-binary {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.82rem;
+      color: #a0c4ff;
+      white-space: nowrap;
+    }
+
+    /* ---- Bit inspector (expanded row) ---- */
+    .bit-inspector-row td {
+      padding: 0;
+      background: #0a0d1a;
+      cursor: default;
+    }
+
+    .bit-inspector {
+      padding: 0.75rem 1rem;
+      border-top: 1px solid #1e2440;
+    }
+
+    .bit-inspector__title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #8aa0ff;
+      margin-bottom: 0.6rem;
+      letter-spacing: 0.04em;
+    }
+
+    .bit-inspector__grid {
+      display: grid;
+      grid-template-columns: repeat(16, 1fr);
+      gap: 3px;
+      max-width: 600px;
+    }
+
+    .bit-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .bit-cell__pos {
+      font-size: 0.65rem;
+      color: #666;
+      font-family: 'Courier New', Courier, monospace;
+    }
+
+    .bit-cell__val {
+      width: 26px;
+      height: 26px;
+      border-radius: 3px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.8rem;
+      font-weight: 700;
+      transition: background 0.1s, color 0.1s;
+    }
+
+    .bit-cell__val--on {
+      background: #1e4a8a;
+      color: #a0c4ff;
+      border: 1px solid #4a9eff;
+    }
+
+    .bit-cell__val--off {
+      background: #1a1a2e;
+      color: #444;
+      border: 1px solid #2a2f45;
+    }
+
+    /* ---- Status / empty states ---- */
+    .viewer-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 120px;
+      color: #555;
+      font-size: 0.875rem;
+    }
+
+    .viewer-error {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 80px;
+      color: #e05050;
+      font-size: 0.875rem;
+      padding: 0 1rem;
+      text-align: center;
+    }
+
+    .viewer-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 80px;
+      color: #666;
+      font-size: 0.875rem;
+    }
+
+    /* ---- Auto-refresh indicator dot ---- */
+    .refresh-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #555;
+      display: inline-block;
+      margin-left: 0.25rem;
+      vertical-align: middle;
+    }
+
+    .refresh-dot.active {
+      background: #4a9eff;
+      box-shadow: 0 0 4px #4a9eff88;
+    }
+  </style>
+</head>
+<body class="viewer-page">
+
+  <header class="global-header">
+    <span class="global-header__title">
+      <img src="/favicon/favicon.svg" alt="Aegis" class="header-logo">AEGIS CONTROL
+    </span>
+    <div class="global-header__actions">
+      <a href="/" class="btn-action">← Devices</a>
+      <a href="/help" class="btn-action">Help</a>
+    </div>
+  </header>
+
+  <div class="viewer-layout">
+
+    <!-- Query controls -->
+    <div class="viewer-controls">
+
+      <div class="viewer-controls__group">
+        <span class="viewer-controls__label">Device</span>
+        <select id="v-device" class="viewer-controls__input viewer-controls__input--medium">
+          <option value="">— select —</option>
+        </select>
+      </div>
+
+      <div class="viewer-controls__sep"></div>
+
+      <div id="v-endpoint-info" class="viewer-endpoint" style="display:none">
+        <span id="v-endpoint-text"></span>
+      </div>
+
+      <div class="viewer-controls__group">
+        <span class="viewer-controls__label">Function Code</span>
+        <select id="v-fc" class="viewer-controls__input viewer-controls__input--short">
+          <option value="3">FC3 — Holding Registers</option>
+          <option value="4">FC4 — Input Registers</option>
+          <option value="1">FC1 — Coils</option>
+          <option value="2">FC2 — Discrete Inputs</option>
+        </select>
+      </div>
+
+      <div class="viewer-controls__group">
+        <span class="viewer-controls__label">Start Address</span>
+        <input id="v-address" type="number" min="0" max="65535" value="0"
+               class="viewer-controls__input viewer-controls__input--short" placeholder="0">
+      </div>
+
+      <div class="viewer-controls__group">
+        <span class="viewer-controls__label">Quantity</span>
+        <input id="v-quantity" type="number" min="1" max="125" value="10"
+               class="viewer-controls__input viewer-controls__input--short" placeholder="10">
+      </div>
+
+      <div class="viewer-controls__actions">
+        <button id="v-read-btn" class="btn-primary">Read</button>
+        <label class="viewer-controls__refresh" title="Refresh every second">
+          <input id="v-auto-refresh" type="checkbox">
+          Auto-refresh <span id="v-refresh-dot" class="refresh-dot"></span>
+        </label>
+      </div>
+
+    </div>
+
+    <!-- Register table -->
+    <div class="viewer-card">
+      <div class="viewer-card__header">
+        <span class="viewer-card__title">Register Values</span>
+        <span id="v-card-meta" class="viewer-card__meta"></span>
+      </div>
+      <div class="viewer-card__body" id="v-table-body">
+        <div class="viewer-empty">Select a device and press Read to load register values.</div>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    // ---- State ----
+    let devices = [];        // [{key, displayName, source, target}]
+    let lastValues = [];     // last read register values [{address, value}]
+    let expandedRow = null;  // address of currently expanded bit inspector row
+    let refreshTimer = null;
+
+    const AUTO_REFRESH_INTERVAL_MS = 1000;
+
+    // ---- DOM refs ----
+    const selDevice   = document.getElementById('v-device');
+    const selFC       = document.getElementById('v-fc');
+    const inpAddress  = document.getElementById('v-address');
+    const inpQuantity = document.getElementById('v-quantity');
+    const btnRead     = document.getElementById('v-read-btn');
+    const chkRefresh  = document.getElementById('v-auto-refresh');
+    const dotRefresh  = document.getElementById('v-refresh-dot');
+    const tableBody   = document.getElementById('v-table-body');
+    const cardMeta    = document.getElementById('v-card-meta');
+    const epInfo      = document.getElementById('v-endpoint-info');
+    const epText      = document.getElementById('v-endpoint-text');
+
+    // ---- Init ----
+    loadDevices();
+
+    // ---- Event listeners ----
+    selDevice.addEventListener('change', onDeviceChange);
+    btnRead.addEventListener('click', doRead);
+    chkRefresh.addEventListener('change', onAutoRefreshChange);
+
+    // ---- Load device list ----
+    function loadDevices() {
+      fetch('/api/config/view')
+        .then(r => r.json())
+        .then(data => {
+          devices = data.devices || [];
+          selDevice.innerHTML = '<option value="">— select —</option>';
+          devices.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.key;
+            opt.textContent = d.display_name || d.key;
+            selDevice.appendChild(opt);
+          });
+          // Auto-select first device if available.
+          if (devices.length > 0) {
+            selDevice.value = devices[0].key;
+            onDeviceChange();
+          }
+        })
+        .catch(err => {
+          console.error('viewer: failed to load device list:', err);
+        });
+    }
+
+    function onDeviceChange() {
+      const key = selDevice.value;
+      const dev = devices.find(d => d.key === key);
+      if (dev && dev.source) {
+        epText.textContent = dev.source.endpoint + '  ·  Unit ID ' + dev.source.unit_id;
+        epInfo.style.display = '';
+      } else {
+        epInfo.style.display = 'none';
+      }
+      // Clear table when device changes.
+      clearTable();
+    }
+
+    function onAutoRefreshChange() {
+      if (chkRefresh.checked) {
+        dotRefresh.classList.add('active');
+        doRead();
+        refreshTimer = setInterval(doRead, AUTO_REFRESH_INTERVAL_MS);
+      } else {
+        dotRefresh.classList.remove('active');
+        if (refreshTimer !== null) {
+          clearInterval(refreshTimer);
+          refreshTimer = null;
+        }
+      }
+    }
+
+    // ---- Read registers ----
+    function doRead() {
+      const device   = selDevice.value;
+      const fc       = parseInt(selFC.value, 10);
+      const address  = parseInt(inpAddress.value, 10);
+      const quantity = parseInt(inpQuantity.value, 10);
+
+      if (!device) {
+        showError('Please select a device.');
+        return;
+      }
+      if (isNaN(address) || address < 0 || address > 65535) {
+        showError('Address must be 0–65535.');
+        return;
+      }
+      if (isNaN(quantity) || quantity < 1 || quantity > 125) {
+        showError('Quantity must be 1–125.');
+        return;
+      }
+
+      const url = '/api/viewer/read?device=' + encodeURIComponent(device)
+                + '&fc=' + fc
+                + '&address=' + address
+                + '&quantity=' + quantity;
+
+      // Show loading only on first load (not during auto-refresh)
+      if (lastValues.length === 0) {
+        tableBody.innerHTML = '<div class="viewer-loading">Reading…</div>';
+      }
+
+      fetch(url)
+        .then(r => {
+          if (!r.ok) {
+            return r.json().then(e => { throw new Error('HTTP ' + r.status + ': ' + (e.error || 'request failed')); });
+          }
+          return r.json();
+        })
+        .then(data => {
+          const values = data.values || [];
+          const startAddr = data.address;
+          lastValues = values.map((v, i) => ({ address: startAddr + i, value: v }));
+          renderTable(fc);
+          cardMeta.textContent = values.length + ' register' + (values.length !== 1 ? 's' : '')
+                               + ' · FC' + fc + ' · ' + new Date().toLocaleTimeString();
+        })
+        .catch(err => {
+          if (!chkRefresh.checked) {
+            showError(err.message);
+          }
+        });
+    }
+
+    // ---- Render table ----
+    function renderTable(fc) {
+      if (lastValues.length === 0) {
+        tableBody.innerHTML = '<div class="viewer-empty">No values returned.</div>';
+        return;
+      }
+
+      const isBit = (fc === 1 || fc === 2);
+      const thead = '<thead><tr>'
+        + '<th>Address</th>'
+        + '<th>Decimal</th>'
+        + (isBit ? '' : '<th>Hex</th><th>Binary</th>')
+        + '</tr></thead>';
+
+      let rows = '';
+      lastValues.forEach(({ address, value }) => {
+        const isExpanded = (expandedRow === address);
+        const hexStr   = '0x' + value.toString(16).toUpperCase().padStart(4, '0');
+        const binStr   = formatBinary(value);
+        const rowCls   = isExpanded ? 'selected' : '';
+
+        rows += '<tr class="' + rowCls + '" data-address="' + address + '">'
+              + '<td class="col-address">' + address + '</td>'
+              + '<td class="col-decimal">' + value + '</td>'
+              + (isBit ? '' : '<td class="col-hex">' + hexStr + '</td>'
+                             + '<td class="col-binary">' + binStr + '</td>')
+              + '</tr>';
+
+        if (isExpanded && !isBit) {
+          rows += '<tr class="bit-inspector-row">'
+                + '<td colspan="4">' + buildBitInspector(address, value) + '</td>'
+                + '</tr>';
+        }
+      });
+
+      tableBody.innerHTML = '<table class="reg-table">' + thead + '<tbody>' + rows + '</tbody></table>';
+
+      // Bind row click events.
+      tableBody.querySelectorAll('.reg-table tbody tr:not(.bit-inspector-row)').forEach(row => {
+        row.addEventListener('click', function () {
+          const addr = parseInt(this.getAttribute('data-address'), 10);
+          const fc2 = parseInt(selFC.value, 10);
+          if (fc2 === 1 || fc2 === 2) return; // No bit inspector for bit areas
+          if (expandedRow === addr) {
+            expandedRow = null;
+          } else {
+            expandedRow = addr;
+          }
+          renderTable(fc2);
+          // Scroll the expanded row into view.
+          if (expandedRow !== null) {
+            const sel = tableBody.querySelector('tr.selected');
+            if (sel) sel.scrollIntoView({ block: 'nearest' });
+          }
+        });
+      });
+    }
+
+    // ---- Bit inspector HTML ----
+    function buildBitInspector(address, value) {
+      let cells = '';
+      // Display bits 15 down to 0 (MSB first).
+      for (let bit = 15; bit >= 0; bit--) {
+        const bitVal = (value >> bit) & 1;
+        const cls = bitVal ? 'bit-cell__val--on' : 'bit-cell__val--off';
+        cells += '<div class="bit-cell">'
+               + '<div class="bit-cell__pos">' + bit + '</div>'
+               + '<div class="bit-cell__val ' + cls + '">' + bitVal + '</div>'
+               + '</div>';
+      }
+      return '<div class="bit-inspector">'
+           + '<div class="bit-inspector__title">Register ' + address + '</div>'
+           + '<div class="bit-inspector__grid">' + cells + '</div>'
+           + '</div>';
+    }
+
+    // ---- Helpers ----
+    function formatBinary(value) {
+      const b = value.toString(2).padStart(16, '0');
+      return b.slice(0, 8) + ' ' + b.slice(8);
+    }
+
+    function clearTable() {
+      lastValues = [];
+      expandedRow = null;
+      tableBody.innerHTML = '<div class="viewer-empty">Select a device and press Read to load register values.</div>';
+      cardMeta.textContent = '';
+    }
+
+    function showError(msg) {
+      tableBody.innerHTML = '<div class="viewer-error">' + escHtml(msg) + '</div>';
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+  })();
+  </script>
+
+</body>
+</html>

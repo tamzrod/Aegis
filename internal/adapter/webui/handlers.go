@@ -28,6 +28,7 @@ type handlers struct {
 	lp       ListenerProvider
 	dp       DeviceStatusProvider
 	dsr      DeviceStatusReader
+	vr       ViewerReader
 	pu       PasswordUpdater
 	sessions *sessionStore
 	authMu   sync.RWMutex
@@ -420,6 +421,96 @@ func (h *handlers) handleChangePassword(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// viewerReadResponse is the JSON body returned by GET /api/viewer/read.
+type viewerReadResponse struct {
+	Device   string   `json:"device"`
+	FC       uint8    `json:"fc"`
+	Address  uint16   `json:"address"`
+	Values   []uint16 `json:"values"`
+}
+
+// handleViewerRead serves GET /api/viewer/read.
+// Query parameters: device, fc, address, quantity.
+// It reads raw register or coil values from the in-process store for the given device
+// and returns them as a JSON array of uint16 values.
+func (h *handlers) handleViewerRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if h.vr == nil {
+		writeError(w, http.StatusServiceUnavailable, "viewer not available")
+		return
+	}
+
+	q := r.URL.Query()
+
+	device := q.Get("device")
+	if device == "" {
+		writeError(w, http.StatusBadRequest, "device query parameter is required")
+		return
+	}
+
+	parseU8 := func(key string) (uint8, bool) {
+		s := q.Get(key)
+		if s == "" {
+			return 0, false
+		}
+		var v uint8
+		if _, err := fmt.Sscanf(s, "%d", &v); err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+
+	parseU16 := func(key string) (uint16, bool) {
+		s := q.Get(key)
+		if s == "" {
+			return 0, false
+		}
+		var v uint16
+		if _, err := fmt.Sscanf(s, "%d", &v); err != nil {
+			return 0, false
+		}
+		return v, true
+	}
+
+	fc, okFC := parseU8("fc")
+	address, okAddr := parseU16("address")
+	quantity, okQty := parseU16("quantity")
+
+	if !okFC || !okAddr || !okQty {
+		writeError(w, http.StatusBadRequest, "fc, address, and quantity query parameters are required")
+		return
+	}
+	if fc < 1 || fc > 4 {
+		writeError(w, http.StatusBadRequest, "fc must be 1, 2, 3, or 4")
+		return
+	}
+	if quantity == 0 {
+		writeError(w, http.StatusBadRequest, "quantity must be greater than zero")
+		return
+	}
+
+	values, err := h.vr.ReadViewerRegisters(device, fc, address, quantity)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	resp := viewerReadResponse{
+		Device:  device,
+		FC:      fc,
+		Address: address,
+		Values:  values,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleLogout serves POST /api/logout.

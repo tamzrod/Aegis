@@ -293,6 +293,101 @@ func (r *RuntimeManager) ReadDeviceStatus(port, statusUnitID, statusSlot uint16)
 	}, nil
 }
 
+// ReadViewerRegisters reads raw register or coil values from the in-process store
+// for the device identified by deviceKey. It supports FC1 (coils), FC2 (discrete inputs),
+// FC3 (holding registers), and FC4 (input registers).
+// The memory is looked up by the device's target (port, unit_id).
+func (r *RuntimeManager) ReadViewerRegisters(deviceKey string, fc uint8, address, quantity uint16) ([]uint16, error) {
+	r.mu.Lock()
+	st := r.store
+	cfg := r.activeCfg
+	r.mu.Unlock()
+
+	if st == nil {
+		return nil, fmt.Errorf("runtime store not available")
+	}
+	if cfg == nil {
+		return nil, fmt.Errorf("no active configuration")
+	}
+
+	// Find the unit with the matching ID.
+	var targetPort uint16
+	var targetUnitID uint16
+	found := false
+	for _, u := range cfg.Replicator.Units {
+		if u.ID == deviceKey {
+			targetPort = u.Target.Port
+			targetUnitID = uint16(u.Target.UnitID)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("device %q not found in active configuration", deviceKey)
+	}
+
+	mem, err := st.MustGet(core.MemoryID{Port: targetPort, UnitID: targetUnitID})
+	if err != nil {
+		return nil, fmt.Errorf("memory not found (port=%d unit_id=%d): %w", targetPort, targetUnitID, err)
+	}
+
+	switch fc {
+	case 1: // Read Coils
+		packed := make([]byte, (int(quantity)+7)/8)
+		if err := mem.ReadBits(core.AreaCoils, address, quantity, packed); err != nil {
+			return nil, fmt.Errorf("FC1 read failed: %w", err)
+		}
+		return unpackBitsToUint16(packed, quantity), nil
+
+	case 2: // Read Discrete Inputs
+		packed := make([]byte, (int(quantity)+7)/8)
+		if err := mem.ReadBits(core.AreaDiscreteInputs, address, quantity, packed); err != nil {
+			return nil, fmt.Errorf("FC2 read failed: %w", err)
+		}
+		return unpackBitsToUint16(packed, quantity), nil
+
+	case 3: // Read Holding Registers
+		raw := make([]byte, int(quantity)*2)
+		if err := mem.ReadRegs(core.AreaHoldingRegs, address, quantity, raw); err != nil {
+			return nil, fmt.Errorf("FC3 read failed: %w", err)
+		}
+		return bytesToUint16s(raw, quantity), nil
+
+	case 4: // Read Input Registers
+		raw := make([]byte, int(quantity)*2)
+		if err := mem.ReadRegs(core.AreaInputRegs, address, quantity, raw); err != nil {
+			return nil, fmt.Errorf("FC4 read failed: %w", err)
+		}
+		return bytesToUint16s(raw, quantity), nil
+
+	default:
+		return nil, fmt.Errorf("unsupported function code %d", fc)
+	}
+}
+
+// unpackBitsToUint16 converts packed bit bytes (Modbus coil format) to a slice of
+// uint16 values where each element is 0 or 1 for the corresponding coil.
+func unpackBitsToUint16(packed []byte, count uint16) []uint16 {
+	out := make([]uint16, count)
+	for i := uint16(0); i < count; i++ {
+		byteIdx := i / 8
+		bitIdx := i % 8
+		if int(byteIdx) < len(packed) && (packed[byteIdx]>>bitIdx)&1 == 1 {
+			out[i] = 1
+		}
+	}
+	return out
+}
+
+// bytesToUint16s converts a big-endian byte slice to a slice of uint16 register values.
+func bytesToUint16s(raw []byte, count uint16) []uint16 {
+	out := make([]uint16, count)
+	for i := uint16(0); i < count; i++ {
+		out[i] = uint16(raw[i*2])<<8 | uint16(raw[i*2+1])
+	}
+	return out
+}
+
 // healthCodeToString converts a health uint16 code to a human-readable string.
 func healthCodeToString(code uint16) string {
 	switch code {
