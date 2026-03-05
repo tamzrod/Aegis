@@ -32,6 +32,7 @@
         <li><a class="help-nav__link" href="#reads-configuration">Reads Configuration</a></li>
         <li><a class="help-nav__link" href="#target-configuration">Target Configuration</a></li>
         <li><a class="help-nav__link" href="#device-status">Device Status</a></li>
+        <li><a class="help-nav__link" href="#status-registers">Status Registers (Modbus)</a></li>
         <li><a class="help-nav__link" href="#troubleshooting">Troubleshooting</a></li>
         <li><a class="help-nav__link" href="#about">About Aegis</a></li>
       </ul>
@@ -224,6 +225,100 @@
             </tr>
           </tbody>
         </table>
+      </section>
+
+      <!-- Status Registers (Modbus) -->
+      <section class="help-section" id="status-registers">
+        <h2 class="help-section__heading">Status Registers (Modbus)</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">
+          Each device in Aegis is assigned a <strong>Status Slot</strong>.
+          Every slot reserves <strong>30 Modbus registers</strong> that contain the device's health and runtime statistics.
+        </p>
+        <p class="help-section__body">
+          External Modbus clients can read these registers using the configured:
+        </p>
+        <ul class="help-list">
+          <li><strong>Status Unit ID</strong></li>
+          <li><strong>Status Slot</strong></li>
+        </ul>
+
+        <h3 class="help-section__subheading">Status Unit ID</h3>
+        <p class="help-section__body">
+          The Status Unit ID defines the Modbus slave ID that exposes the status memory block.
+        </p>
+        <p class="help-section__body">
+          Example:<br>
+          <code class="help-code">Status Unit ID = 100</code><br>
+          Clients must query Unit ID <code class="help-code">100</code> to read device status.
+        </p>
+
+        <h3 class="help-section__subheading">Status Slot</h3>
+        <p class="help-section__body">
+          Each device occupies one Status Slot. Slots are assigned sequentially starting from 0.
+        </p>
+        <table class="help-table">
+          <thead>
+            <tr>
+              <th>Device</th>
+              <th>Slot</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Device A</td><td><code class="help-code">0</code></td></tr>
+            <tr><td>Device B</td><td><code class="help-code">1</code></td></tr>
+            <tr><td>Device C</td><td><code class="help-code">2</code></td></tr>
+          </tbody>
+        </table>
+        <p class="help-section__body">Each slot contains <strong>30 registers</strong>.</p>
+
+        <h3 class="help-section__subheading">Register Addressing</h3>
+        <p class="help-section__body">
+          The register address for a slot is calculated as:
+        </p>
+        <p class="help-section__body">
+          <code class="help-code">slot_start = slot_number × 30</code>
+        </p>
+        <table class="help-table">
+          <thead>
+            <tr>
+              <th>Slot</th>
+              <th>Register Range</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code class="help-code">0</code></td><td><code class="help-code">0 – 29</code></td></tr>
+            <tr><td><code class="help-code">1</code></td><td><code class="help-code">30 – 59</code></td></tr>
+            <tr><td><code class="help-code">2</code></td><td><code class="help-code">60 – 89</code></td></tr>
+            <tr><td><code class="help-code">3</code></td><td><code class="help-code">90 – 119</code></td></tr>
+          </tbody>
+        </table>
+
+        <h3 class="help-section__subheading">Example Modbus Read</h3>
+        <p class="help-section__body">To read the status of Slot 2:</p>
+        <table class="help-table">
+          <tbody>
+            <tr><td><span class="help-field">Unit ID</span></td><td><code class="help-code">100</code></td></tr>
+            <tr><td><span class="help-field">Function Code</span></td><td><code class="help-code">FC3</code></td></tr>
+            <tr><td><span class="help-field">Address</span></td><td><code class="help-code">60</code></td></tr>
+            <tr><td><span class="help-field">Quantity</span></td><td><code class="help-code">30</code></td></tr>
+          </tbody>
+        </table>
+        <p class="help-section__body">This will return all status registers for that device.</p>
+
+        <h3 class="help-section__subheading">Purpose</h3>
+        <p class="help-section__body">
+          These registers allow SCADA or monitoring systems to detect:
+        </p>
+        <ul class="help-list">
+          <li>Device offline state</li>
+          <li>Communication errors</li>
+          <li>Timeouts</li>
+          <li>Runtime health</li>
+        </ul>
+        <p class="help-section__body">
+          This enables external systems to monitor device health without needing the WebUI.
+        </p>
       </section>
 
       <!-- Troubleshooting -->
