@@ -87,6 +87,7 @@ type ViewerReader interface {
 type Server struct {
 	listen string
 	srv    *http.Server
+	h      *handlers
 }
 
 // NewServer creates a WebUI Server that listens on listen and uses mgr for runtime operations.
@@ -161,6 +162,8 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	protected.HandleFunc("/api/runtime/devices", h.handleRuntimeDevices)
 	protected.HandleFunc("/api/device/status", h.handleDeviceStatus)
 	protected.HandleFunc("/api/viewer/read", h.handleViewerRead)
+	protected.HandleFunc("/api/dataview", h.handleDataviewGet)
+	protected.HandleFunc("/api/dataview/register", h.handleDataviewPut)
 	protected.HandleFunc("/api/logout", h.handleLogout)
 	protected.Handle("/", http.FileServer(http.FS(webFS)))
 
@@ -169,7 +172,15 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	return &Server{
 		listen: listen,
 		srv:    &http.Server{Addr: listen, Handler: mux},
+		h:      h,
 	}
+}
+
+// SetDataviewPath configures the path to the dataview.yaml persistence file.
+// When set to a non-empty path, GET /api/dataview and PUT /api/dataview become
+// active and load/store per-register viewer labels (name, type, word_order).
+func (s *Server) SetDataviewPath(path string) {
+	s.h.dataviewPath = path
 }
 
 // ListenAndServe starts the WebUI HTTP server. It blocks until the server stops.

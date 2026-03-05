@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/tamzrod/Aegis/internal/adapter/webui"
@@ -97,6 +98,9 @@ func main() {
 	// --------------------
 	if startWebUI {
 		srv := webui.NewServer(webuiListen, rt, authCfg)
+		// Derive the dataview config path from the main config path (same directory).
+		dvPath := filepath.Join(filepath.Dir(cfgPath), "dataview.yaml")
+		srv.SetDataviewPath(dvPath)
 		go func() {
 			if err := srv.ListenAndServe(); err != nil {
 				log.Printf("aegis: webui: %v", err)
