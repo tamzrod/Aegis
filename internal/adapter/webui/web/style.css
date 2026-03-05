@@ -462,6 +462,74 @@ select.field-input {
 .ds-health-disabled { background: #1c1c2e; color: #94a3b8; border: 1px solid #475569; }
 .ds-health-unknown  { background: #1c1c2e; color: #94a3b8; border: 1px solid #475569; }
 
+/* ---- Device Summary runtime badge ---- */
+.ds-runtime-badge {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: capitalize;
+}
+
+.ds-runtime-online  { background: #14532d; color: #86efac; border: 1px solid #22c55e; }
+.ds-runtime-error   { background: #450a0a; color: #fca5a5; border: 1px solid #ef4444; }
+.ds-runtime-offline { background: #1c1c2e; color: #94a3b8; border: 1px solid #475569; }
+.ds-runtime-warning { background: #451a03; color: #fcd34d; border: 1px solid #f59e0b; }
+
+/* ---- Diagnostics latency colour ---- */
+.ds-latency-ok      { color: #86efac; }
+.ds-latency-warn    { color: #fcd34d; }
+.ds-latency-error   { color: #fca5a5; }
+.ds-latency-unknown { color: #94a3b8; }
+
+/* ---- Poll Performance bar ---- */
+.ds-poll-perf {
+  margin-top: 0.65rem;
+}
+
+.ds-poll-perf-label {
+  font-size: 0.75rem;
+  color: #94a3b8;
+  margin-bottom: 0.3rem;
+}
+
+.ds-poll-perf-bar-wrap {
+  background: #2d2d4e;
+  border-radius: 3px;
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid #3a3a5e;
+}
+
+.ds-poll-perf-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
+.ds-poll-perf-bar.ds-latency-ok    { background: #22c55e; }
+.ds-poll-perf-bar.ds-latency-warn  { background: #f59e0b; }
+.ds-poll-perf-bar.ds-latency-error { background: #ef4444; }
+.ds-poll-perf-bar.ds-latency-unknown { background: #475569; }
+
+/* ---- Sparkline SVG ---- */
+.ds-sparkline {
+  display: block;
+  width: 100%;
+  height: 40px;
+  background: #16162a;
+  border-radius: 4px;
+  border: 1px solid #2d2d4e;
+}
+
+.ds-sparkline-label {
+  font-size: 0.72rem;
+  margin-top: 0.25rem;
+  text-align: right;
+}
+
 /* ---- Slot hint (used slots indicator in target edit form) ---- */
 .slot-hint {
   font-size: 0.75rem;

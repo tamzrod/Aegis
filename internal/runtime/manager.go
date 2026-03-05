@@ -31,6 +31,12 @@ type StatusBlockSnapshot struct {
 	TransportErrors     uint32 `json:"transport_errors"`
 	ConsecutiveFailCurr uint16 `json:"consecutive_fail_curr"`
 	ConsecutiveFailMax  uint16 `json:"consecutive_fail_max"`
+
+	// Poll latency diagnostics (milliseconds). Populated from the latency tracker
+	// if available; zero otherwise.
+	LastPollMs uint32 `json:"last_poll_ms"`
+	AvgPollMs  uint32 `json:"avg_poll_ms"`
+	MaxPollMs  uint32 `json:"max_poll_ms"`
 }
 
 // ListenerStatus describes the bind result for one Modbus TCP adapter port.

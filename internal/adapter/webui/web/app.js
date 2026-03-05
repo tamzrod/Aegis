@@ -578,6 +578,10 @@ function renderReadsList(device, editIndex) {
 
 let _deviceStatusTimer = null;
 
+// Latency history ring buffer (last 20 samples, one per successful poll update).
+const SPARKLINE_MAX = 20;
+let _latencyHistory = [];
+
 // healthColor returns a CSS class name matching the health string.
 function healthColor(health) {
   switch ((health || '').toUpperCase()) {
@@ -589,12 +593,68 @@ function healthColor(health) {
   }
 }
 
+// latencyColorClass returns a CSS class based on poll latency in ms.
+// green → fast, yellow → moderate, red → degraded.
+function latencyColorClass(ms) {
+  if (ms === 0) return 'ds-latency-unknown';
+  if (ms <= 50)  return 'ds-latency-ok';
+  if (ms <= 150) return 'ds-latency-warn';
+  return 'ds-latency-error';
+}
+
+// renderDeviceSummaryCard populates the Device Summary section from the device
+// config object and the current runtime status string.
+function renderDeviceSummaryCard(device, runtimeState) {
+  const section = document.getElementById('device-summary-section');
+  const content = document.getElementById('device-summary-content');
+  if (!device) {
+    section.style.display = 'none';
+    content.innerHTML = '';
+    return;
+  }
+  section.style.display = '';
+
+  const src = device.source || {};
+  const statusObj = deviceStatuses[device.key] || { status: 'offline' };
+  const runtimeLabel = runtimeState || statusObj.status || 'offline';
+
+  const table = document.createElement('table');
+  table.className = 'field-table';
+  [
+    ['Name',     src.device_name || device.display_name || device.key],
+    ['Endpoint', src.endpoint    || '—'],
+    ['Unit ID',  src.unit_id     ?? '—'],
+    ['Runtime',  runtimeLabel],
+  ].forEach(([label, value]) => {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.textContent = label;
+    const td = document.createElement('td');
+    if (label === 'Runtime') {
+      const badge = document.createElement('span');
+      badge.className = 'ds-runtime-badge ds-runtime-' + (statusObj.status || 'offline');
+      badge.textContent = runtimeLabel;
+      td.appendChild(badge);
+    } else {
+      td.textContent = value;
+    }
+    tr.appendChild(th);
+    tr.appendChild(td);
+    table.appendChild(tr);
+  });
+
+  content.innerHTML = '';
+  content.appendChild(table);
+}
+
 function renderDeviceStatusPanel(data) {
   const section = document.getElementById('device-status-section');
   const content = document.getElementById('device-status-content');
   if (!data) {
     section.style.display = 'none';
     content.innerHTML = '';
+    renderDeviceDiagnostics(null);
+    renderSparkline(null);
     return;
   }
   section.style.display = '';
@@ -635,6 +695,126 @@ function renderDeviceStatusPanel(data) {
 
   content.innerHTML = '';
   content.appendChild(table);
+
+  // Update diagnostics and sparkline with the same data refresh.
+  renderDeviceDiagnostics(data);
+
+  // Update latency history ring buffer.
+  const lastMs = data.last_poll_ms ?? 0;
+  if (lastMs > 0) {
+    _latencyHistory.push(lastMs);
+    if (_latencyHistory.length > SPARKLINE_MAX) {
+      _latencyHistory.shift();
+    }
+  }
+  renderSparkline(_latencyHistory.length > 0 ? _latencyHistory : null);
+}
+
+// renderDeviceDiagnostics populates the Device Diagnostics section.
+function renderDeviceDiagnostics(data) {
+  const section = document.getElementById('device-diagnostics-section');
+  const content = document.getElementById('device-diagnostics-content');
+  if (!data) {
+    section.style.display = 'none';
+    content.innerHTML = '';
+    return;
+  }
+  section.style.display = '';
+
+  const lastMs = data.last_poll_ms ?? 0;
+  const avgMs  = data.avg_poll_ms  ?? 0;
+  const maxMs  = data.max_poll_ms  ?? 0;
+
+  // Build the diagnostics table.
+  const table = document.createElement('table');
+  table.className = 'field-table';
+
+  const fmtMs = ms => ms > 0 ? ms + ' ms' : '—';
+  const rowMetrics = [
+    ['Avg Response Time', fmtMs(avgMs), avgMs],
+    ['Last Response',     fmtMs(lastMs), lastMs],
+    ['Max Response',      fmtMs(maxMs), maxMs],
+  ];
+  rowMetrics.forEach(([label, value, metric]) => {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.textContent = label;
+    const td = document.createElement('td');
+    td.className = latencyColorClass(metric);
+    td.textContent = value;
+    tr.appendChild(th);
+    tr.appendChild(td);
+    table.appendChild(tr);
+  });
+
+  // Poll Performance bar.
+  const perf = document.createElement('div');
+  perf.className = 'ds-poll-perf';
+
+  const perfLabel = document.createElement('div');
+  perfLabel.className = 'ds-poll-perf-label';
+  perfLabel.textContent = 'Poll Performance';
+
+  const barWrap = document.createElement('div');
+  barWrap.className = 'ds-poll-perf-bar-wrap';
+
+  const bar = document.createElement('div');
+  bar.className = 'ds-poll-perf-bar';
+  // Bar width uses an exponential decay: width% = 100 * exp(-ms / 200).
+  // This gives ~61% at 100ms, ~37% at 200ms, ~7% at 500ms, and near-zero beyond 1s.
+  // A floor of 5% keeps the bar visible even for very slow devices.
+  // The 200ms baseline was chosen to match typical Modbus timeout thresholds.
+  const refMs = avgMs > 0 ? avgMs : lastMs;
+  const pct = refMs > 0 ? Math.max(5, Math.round(100 * Math.exp(-refMs / 200))) : 0;
+  bar.style.width = pct + '%';
+  bar.className += ' ' + latencyColorClass(refMs);
+
+  barWrap.appendChild(bar);
+  perf.appendChild(perfLabel);
+  perf.appendChild(barWrap);
+
+  content.innerHTML = '';
+  content.appendChild(table);
+  content.appendChild(perf);
+}
+
+// renderSparkline draws a tiny SVG sparkline of poll latency history.
+function renderSparkline(history) {
+  const section = document.getElementById('device-sparkline-section');
+  const content = document.getElementById('device-sparkline-content');
+  if (!history || history.length === 0) {
+    section.style.display = 'none';
+    content.innerHTML = '';
+    return;
+  }
+  section.style.display = '';
+
+  const W = 200, H = 36, PAD = 2;
+  const minVal = Math.min(...history);
+  const maxVal = Math.max(...history);
+  const range  = maxVal - minVal || 1;
+
+  // Map each sample to an SVG point.
+  const points = history.map((v, i) => {
+    const x = PAD + (i / Math.max(history.length - 1, 1)) * (W - PAD * 2);
+    const y = PAD + (1 - (v - minVal) / range) * (H - PAD * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+
+  const lastMs = history[history.length - 1];
+  const colorMap = { 'ds-latency-ok': '#22c55e', 'ds-latency-warn': '#f59e0b', 'ds-latency-error': '#ef4444', 'ds-latency-unknown': '#94a3b8' };
+  const stroke = colorMap[latencyColorClass(lastMs)] || '#94a3b8';
+
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" class="ds-sparkline">` +
+    `<polyline points="${points.join(' ')}" fill="none" stroke="${stroke}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>` +
+    `</svg>`;
+
+  const labelDiv = document.createElement('div');
+  labelDiv.className = 'ds-sparkline-label ' + latencyColorClass(lastMs);
+  labelDiv.textContent = lastMs + ' ms (last)';
+
+  content.innerHTML = svg;
+  content.appendChild(labelDiv);
 }
 
 function stopDeviceStatusPolling() {
@@ -681,12 +861,21 @@ function renderDevice(device) {
       document.getElementById(id).innerHTML = '';
     });
     stopDeviceStatusPolling();
+    renderDeviceSummaryCard(null);
     renderDeviceStatusPanel(null);
+    _latencyHistory = [];
     return;
   }
   renderSourceView(device);
   renderReadsList(device);
   renderTargetView(device);
+
+  // Render the summary card immediately from config (no async needed).
+  const statusObj = deviceStatuses[device.key] || { status: 'offline' };
+  renderDeviceSummaryCard(device, statusObj.status);
+
+  // Reset latency history when switching devices.
+  _latencyHistory = [];
 
   const tgt = device.target || {};
   startDeviceStatusPolling(tgt.port, tgt.status_unit_id, tgt.status_slot);

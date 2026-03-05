@@ -46,6 +46,7 @@ type blockHealthWriter interface {
 //   - store writes (pollWriter — IO)
 //   - SecondsInError increment via secTicker (scheduling)
 //   - write-change policy: WriteStatus is only called when snap actually changed
+//   - poll latency recording (passive observability only)
 func runOrchestrator(
 	ctx context.Context,
 	unitID string,
@@ -53,6 +54,7 @@ func runOrchestrator(
 	writer pollWriter,
 	health blockHealthWriter,
 	ch <-chan engine.PollResult,
+	tracker *PollLatencyTracker,
 ) {
 	snap := engine.StatusSnapshot{
 		Health: engine.HealthUnknown,
@@ -73,6 +75,13 @@ func runOrchestrator(
 			return
 
 		case res := <-ch:
+			// Record poll latency: duration from tick time to result receipt.
+			// This is a passive observation; it does not influence control flow.
+			if tracker != nil && !res.At.IsZero() {
+				ms := uint32(time.Since(res.At).Milliseconds())
+				tracker.Record(unitID, ms)
+			}
+
 			if err := writer.Write(res); err != nil {
 				log.Printf("aegis: write error (unit=%s): %v", unitID, err)
 			}
