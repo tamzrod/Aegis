@@ -206,7 +206,7 @@ function renderSourceEdit(device) {
   });
   content.innerHTML = '';
   content.appendChild(table);
-  inputs['endpoint'].focus();
+  inputs['device_name'].focus();
 
   // Inline endpoint validation: show error and guard the Save button.
   function checkEndpoint() {
