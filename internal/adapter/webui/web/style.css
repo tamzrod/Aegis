@@ -34,6 +34,12 @@ body {
   gap: 0.5rem;
 }
 
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
 /* ---- Right panel ---- */
 .right-panel {
   flex: 1;
@@ -744,6 +750,14 @@ select.field-input {
   margin-bottom: 0.5rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.help-section__subheading {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #a0c4ff;
+  margin-top: 1rem;
+  margin-bottom: 0.4rem;
 }
 
 .help-section__body {
