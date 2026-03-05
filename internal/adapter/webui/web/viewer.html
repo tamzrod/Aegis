@@ -518,6 +518,7 @@
     let dataviewConfig = {}; // {device: {fc_key: {addr_key: {name,type,word_order}}}}
 
     const AUTO_REFRESH_INTERVAL_MS = 1000;
+    const MAX_NAME_LENGTH = 80; // Maximum characters for a register label.
 
     // Supported data types for register interpretation.
     const DATA_TYPES = [
@@ -732,8 +733,8 @@
 
       // 32-bit types need the next consecutive register.
       if (idx + 1 >= lastValues.length) return '\u2014';
+      if (lastValues[idx + 1].address !== address + 1) return '\u2014'; // must be consecutive
       const v1 = lastValues[idx + 1].value;
-      if (lastValues[idx + 1].address !== address + 1) return '\u2014';
 
       const wo       = wordOrder || 'AB';
       const combined = (wo === 'AB')
@@ -746,6 +747,7 @@
         const buf = new ArrayBuffer(4);
         new DataView(buf).setUint32(0, combined);
         const f = new DataView(buf).getFloat32(0);
+        // 7 significant digits matches IEEE 754 single-precision display fidelity.
         return isFinite(f) ? parseFloat(f.toPrecision(7)).toString() : String(f);
       }
       return null;
@@ -890,7 +892,7 @@
         inp.type      = 'text';
         inp.className = 'name-input';
         inp.value     = curName;
-        inp.maxLength = 80;
+        inp.maxLength = MAX_NAME_LENGTH;
         td.replaceChild(inp, this);
         inp.focus();
         inp.select();
