@@ -120,6 +120,29 @@ func putU32(regs []uint16, start int, v uint32) {
 	regs[start+1] = uint16((v >> 16) & 0xFFFF)
 }
 
+func getU32(regs []uint16, start int) uint32 {
+	return uint32(regs[start]) | uint32(regs[start+1])<<16
+}
+
+// DecodeStatusBlock decodes a raw register slice (starting at the block base address)
+// into a StatusSnapshot. regs must contain at least StatusSlotsPerDevice elements.
+func DecodeStatusBlock(regs []uint16) StatusSnapshot {
+	if len(regs) < int(StatusSlotsPerDevice) {
+		return StatusSnapshot{}
+	}
+	return StatusSnapshot{
+		Health:               regs[slotHealthCode],
+		LastErrorCode:        regs[slotLastErrorCode],
+		SecondsInError:       regs[slotSecondsInErr],
+		RequestsTotal:        getU32(regs, slotRequestsTotalLow),
+		ResponsesValidTotal:  getU32(regs, slotResponsesValidLow),
+		TimeoutsTotal:        getU32(regs, slotTimeoutsTotalLow),
+		TransportErrorsTotal: getU32(regs, slotTransportErrorsTotalLow),
+		ConsecutiveFailCurr:  regs[slotConsecutiveFailCurr],
+		ConsecutiveFailMax:   regs[slotConsecutiveFailMax],
+	}
+}
+
 // ErrorCode extracts a uint16 error code from an error value.
 // Supports errors that implement Code(), ErrorCode(), or ModbusCode().
 // Falls back to 1 for unknown errors.

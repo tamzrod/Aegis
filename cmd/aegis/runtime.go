@@ -18,6 +18,7 @@ import (
 
 	"github.com/tamzrod/Aegis/internal/adapter"
 	"github.com/tamzrod/Aegis/internal/config"
+	"github.com/tamzrod/Aegis/internal/core"
 	"github.com/tamzrod/Aegis/internal/engine"
 	runtimepkg "github.com/tamzrod/Aegis/internal/runtime"
 )
@@ -46,6 +47,10 @@ type RuntimeManager struct {
 	// healthStore is the per-read-block health state for the current runtime.
 	// It is replaced on each rebuild and read by DeviceStatuses.
 	healthStore *engine.BlockHealthStore
+
+	// store is the in-process register store for the current runtime.
+	// It is replaced on each rebuild and read by ReadDeviceStatus.
+	store core.Store
 
 	// activeCfg is the most recently built config, used by DeviceStatuses.
 	activeCfg *config.Config
@@ -214,6 +219,69 @@ func (r *RuntimeManager) DeviceStatuses() []runtimepkg.DeviceStatus {
 		out = append(out, runtimepkg.DeviceStatus{ID: u.ID, Status: status, Polling: polling})
 	}
 	return out
+}
+
+// ReadDeviceStatus reads and decodes the status register block for the device
+// identified by (port, statusUnitID, statusSlot) from the in-process store.
+// Returns an error if the store is not initialised or the memory is not found.
+func (r *RuntimeManager) ReadDeviceStatus(port, statusUnitID, statusSlot uint16) (*runtimepkg.StatusBlockSnapshot, error) {
+	r.mu.Lock()
+	st := r.store
+	r.mu.Unlock()
+
+	if st == nil {
+		return nil, fmt.Errorf("runtime store not available")
+	}
+
+	mem, err := st.MustGet(core.MemoryID{Port: port, UnitID: statusUnitID})
+	if err != nil {
+		return nil, fmt.Errorf("status memory not found (port=%d unit_id=%d): %w", port, statusUnitID, err)
+	}
+
+	baseAddr := statusSlot * engine.StatusSlotsPerDevice
+	rawBytes := make([]byte, int(engine.StatusSlotsPerDevice)*2)
+	if err := mem.ReadRegs(core.AreaHoldingRegs, baseAddr, engine.StatusSlotsPerDevice, rawBytes); err != nil {
+		return nil, fmt.Errorf("status read failed (port=%d unit_id=%d slot=%d): %w", port, statusUnitID, statusSlot, err)
+	}
+
+	// Convert big-endian byte pairs to uint16 slice.
+	regs := make([]uint16, engine.StatusSlotsPerDevice)
+	for i := range regs {
+		regs[i] = uint16(rawBytes[i*2])<<8 | uint16(rawBytes[i*2+1])
+	}
+
+	snap := engine.DecodeStatusBlock(regs)
+
+	healthStr := healthCodeToString(snap.Health)
+	online := snap.Health == engine.HealthOK
+
+	return &runtimepkg.StatusBlockSnapshot{
+		Health:              healthStr,
+		Online:              online,
+		SecondsInError:      snap.SecondsInError,
+		RequestsTotal:       snap.RequestsTotal,
+		ResponsesValid:      snap.ResponsesValidTotal,
+		TimeoutsTotal:       snap.TimeoutsTotal,
+		TransportErrors:     snap.TransportErrorsTotal,
+		ConsecutiveFailCurr: snap.ConsecutiveFailCurr,
+		ConsecutiveFailMax:  snap.ConsecutiveFailMax,
+	}, nil
+}
+
+// healthCodeToString converts a health uint16 code to a human-readable string.
+func healthCodeToString(code uint16) string {
+	switch code {
+	case engine.HealthOK:
+		return "OK"
+	case engine.HealthError:
+		return "ERROR"
+	case engine.HealthStale:
+		return "STALE"
+	case engine.HealthDisabled:
+		return "DISABLED"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 // deriveDeviceStatus computes a single status string for a replicator unit
@@ -530,6 +598,7 @@ func (r *RuntimeManager) rebuild(cfg *config.Config, yamlBytes []byte) error {
 	r.activeConfigYAML = yamlBytes
 	r.listenerStatuses = listenerStatuses
 	r.healthStore = healthStore
+	r.store = store
 	r.activeCfg = cfg
 	r.state.SetRunning()
 	return nil

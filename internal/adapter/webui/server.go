@@ -60,6 +60,14 @@ type DeviceStatusProvider interface {
 	DeviceStatuses() []runtime.DeviceStatus
 }
 
+// DeviceStatusReader is an optional extension for reading a single device's decoded
+// status register block from the in-process store.
+// If the concrete Manager also implements DeviceStatusReader, the WebUI serves
+// GET /api/device/status.
+type DeviceStatusReader interface {
+	ReadDeviceStatus(port, statusUnitID, statusSlot uint16) (*runtime.StatusBlockSnapshot, error)
+}
+
 // PasswordUpdater is an optional extension for updating the stored password hash.
 // If the concrete Manager also implements PasswordUpdater, the /api/change-password
 // endpoint becomes active.
@@ -92,6 +100,9 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	}
 	if dp, ok := mgr.(DeviceStatusProvider); ok {
 		h.dp = dp
+	}
+	if dsr, ok := mgr.(DeviceStatusReader); ok {
+		h.dsr = dsr
 	}
 	if pu, ok := mgr.(PasswordUpdater); ok {
 		h.pu = pu
@@ -131,6 +142,7 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	protected.HandleFunc("/api/runtime/stop", h.handleRuntimeStop)
 	protected.HandleFunc("/api/runtime/listeners", h.handleRuntimeListeners)
 	protected.HandleFunc("/api/runtime/devices", h.handleRuntimeDevices)
+	protected.HandleFunc("/api/device/status", h.handleDeviceStatus)
 	protected.HandleFunc("/api/logout", h.handleLogout)
 	protected.Handle("/", http.FileServer(http.FS(webFS)))
 
