@@ -23,16 +23,17 @@ const maxConfigBodyBytes = 1 << 20 // 1 MiB
 const maxLoginBodyBytes = 1 << 16 // 64 KiB
 
 type handlers struct {
-	mgr      Manager
-	sp       StatusProvider
-	lp       ListenerProvider
-	dp       DeviceStatusProvider
-	dsr      DeviceStatusReader
-	vr       ViewerReader
-	pu       PasswordUpdater
-	sessions *sessionStore
-	authMu   sync.RWMutex
-	auth     config.AuthConfig
+	mgr          Manager
+	sp           StatusProvider
+	lp           ListenerProvider
+	dp           DeviceStatusProvider
+	dsr          DeviceStatusReader
+	vr           ViewerReader
+	pu           PasswordUpdater
+	sessions     *sessionStore
+	authMu       sync.RWMutex
+	auth         config.AuthConfig
+	dataviewPath string // path to dataview.yaml; empty disables persistence
 }
 
 // handleConfigRaw serves GET /api/config/raw and PUT /api/config/raw.

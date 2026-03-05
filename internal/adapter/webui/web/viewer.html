@@ -236,6 +236,75 @@
       white-space: nowrap;
     }
 
+    /* Name column — fixed width ~200px */
+    .reg-table td.col-name {
+      width: 200px;
+      min-width: 200px;
+      max-width: 200px;
+    }
+
+    /* Name cell display text */
+    .name-text {
+      display: block;
+      width: 100%;
+      color: #c8d8ff;
+      min-height: 1.2em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      cursor: text;
+    }
+
+    .name-text.empty {
+      color: #3a3f5a;
+    }
+
+    /* Inline name input */
+    .name-input {
+      width: 100%;
+      background: #1a1a3a;
+      border: 1px solid #4a9eff;
+      border-radius: 3px;
+      color: #e0e0e0;
+      padding: 0.1rem 0.3rem;
+      font-size: 0.875rem;
+      outline: none;
+      box-sizing: border-box;
+    }
+
+    .reg-table td.col-type,
+    .reg-table td.col-wordorder {
+      white-space: nowrap;
+    }
+
+    /* Per-row type / word-order dropdowns */
+    .row-select {
+      background: #1a1a3a;
+      border: 1px solid #3a3f5a;
+      border-radius: 3px;
+      color: #a0b0d0;
+      padding: 0.1rem 0.25rem;
+      font-size: 0.78rem;
+      cursor: pointer;
+      outline: none;
+    }
+
+    .row-select:focus {
+      border-color: #4a9eff;
+    }
+
+    .row-select:disabled {
+      opacity: 0.35;
+      cursor: default;
+    }
+
+    .reg-table td.col-parsed {
+      color: #7ecfb0;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+
     .reg-table td.col-decimal {
       color: #e0e0e0;
     }
@@ -446,8 +515,26 @@
     let lastValues = [];     // last read register values [{address, value}]
     let expandedRow = null;  // address of currently expanded bit inspector row
     let refreshTimer = null;
+    let dataviewConfig = {}; // {device: {fc_key: {addr_key: {name,type,word_order}}}}
 
     const AUTO_REFRESH_INTERVAL_MS = 1000;
+    const MAX_NAME_LENGTH = 80; // Maximum characters for a register label.
+
+    // Supported data types for register interpretation.
+    const DATA_TYPES = [
+      { value: '',        label: '\u2014' },
+      { value: 'uint16',  label: 'uint16'  },
+      { value: 'int16',   label: 'int16'   },
+      { value: 'uint32',  label: 'uint32'  },
+      { value: 'int32',   label: 'int32'   },
+      { value: 'float32', label: 'float32' },
+    ];
+
+    const WORD_ORDERS = [
+      { value: '',   label: '\u2014' },
+      { value: 'AB', label: 'AB' },
+      { value: 'BA', label: 'BA' },
+    ];
 
     // ---- DOM refs ----
     const selDevice   = document.getElementById('v-device');
@@ -464,6 +551,7 @@
 
     // ---- Init ----
     loadDevices();
+    loadDataview();
 
     // ---- Event listeners ----
     selDevice.addEventListener('change', onDeviceChange);
@@ -476,7 +564,7 @@
         .then(r => r.json())
         .then(data => {
           devices = data.devices || [];
-          selDevice.innerHTML = '<option value="">— select —</option>';
+          selDevice.innerHTML = '<option value="">\u2014 select \u2014</option>';
           devices.forEach(d => {
             const opt = document.createElement('option');
             opt.value = d.key;
@@ -494,11 +582,69 @@
         });
     }
 
+    // ---- Load dataview configuration ----
+    function loadDataview() {
+      fetch('/api/dataview')
+        .then(r => r.json())
+        .then(data => {
+          dataviewConfig = data.registers || {};
+          // Re-render if values are already loaded so labels appear immediately.
+          if (lastValues.length > 0) {
+            renderTable(parseInt(selFC.value, 10));
+          }
+        })
+        .catch(err => {
+          console.error('viewer: failed to load dataview config:', err);
+        });
+    }
+
+    // ---- Look up a register's dataview entry ----
+    function getEntry(device, fc, address) {
+      const fcKey   = 'fc' + fc;
+      const addrKey = String(address);
+      return (dataviewConfig[device] &&
+              dataviewConfig[device][fcKey] &&
+              dataviewConfig[device][fcKey][addrKey]) || {};
+    }
+
+    // ---- Save a register entry to the backend ----
+    function saveEntry(device, fc, address, name, type, wordOrder) {
+      fetch('/api/dataview/register', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          device:     device,
+          fc:         fc,
+          address:    address,
+          name:       name,
+          type:       type,
+          word_order: wordOrder,
+        }),
+      })
+      .then(r => r.json())
+      .then(() => {
+        // Update local cache.
+        const fcKey   = 'fc' + fc;
+        const addrKey = String(address);
+        if (!dataviewConfig[device])        dataviewConfig[device]        = {};
+        if (!dataviewConfig[device][fcKey]) dataviewConfig[device][fcKey] = {};
+        if (name === '' && type === '' && wordOrder === '') {
+          delete dataviewConfig[device][fcKey][addrKey];
+        } else {
+          dataviewConfig[device][fcKey][addrKey] = { name, type, word_order: wordOrder };
+        }
+        renderTable(fc);
+      })
+      .catch(err => {
+        console.error('viewer: save entry failed:', err);
+      });
+    }
+
     function onDeviceChange() {
       const key = selDevice.value;
       const dev = devices.find(d => d.key === key);
       if (dev && dev.source) {
-        epText.textContent = dev.source.endpoint + '  ·  Unit ID ' + dev.source.unit_id;
+        epText.textContent = dev.source.endpoint + '  \u00b7  Unit ID ' + dev.source.unit_id;
         epInfo.style.display = '';
       } else {
         epInfo.style.display = 'none';
@@ -533,11 +679,11 @@
         return;
       }
       if (isNaN(address) || address < 0 || address > 65535) {
-        showError('Address must be 0–65535.');
+        showError('Address must be 0\u201365535.');
         return;
       }
       if (isNaN(quantity) || quantity < 1 || quantity > 125) {
-        showError('Quantity must be 1–125.');
+        showError('Quantity must be 1\u2013125.');
         return;
       }
 
@@ -548,7 +694,7 @@
 
       // Show loading only on first load (not during auto-refresh)
       if (lastValues.length === 0) {
-        tableBody.innerHTML = '<div class="viewer-loading">Reading…</div>';
+        tableBody.innerHTML = '<div class="viewer-loading">Reading\u2026</div>';
       }
 
       fetch(url)
@@ -564,13 +710,47 @@
           lastValues = values.map((v, i) => ({ address: startAddr + i, value: v }));
           renderTable(fc);
           cardMeta.textContent = values.length + ' register' + (values.length !== 1 ? 's' : '')
-                               + ' · FC' + fc + ' · ' + new Date().toLocaleTimeString();
+                               + ' \u00b7 FC' + fc + ' \u00b7 ' + new Date().toLocaleTimeString();
         })
         .catch(err => {
           if (!chkRefresh.checked) {
             showError(err.message);
           }
         });
+    }
+
+    // ---- Compute parsed value from raw register value(s) ----
+    // Returns a string, or null when no type is configured.
+    function parsedValue(address, type, wordOrder) {
+      if (!type) return null;
+
+      const idx = lastValues.findIndex(r => r.address === address);
+      if (idx < 0) return null;
+      const v0 = lastValues[idx].value;
+
+      if (type === 'uint16') return String(v0);
+      if (type === 'int16')  return String(v0 >= 0x8000 ? v0 - 0x10000 : v0);
+
+      // 32-bit types need the next consecutive register.
+      if (idx + 1 >= lastValues.length) return '\u2014';
+      if (lastValues[idx + 1].address !== address + 1) return '\u2014'; // must be consecutive
+      const v1 = lastValues[idx + 1].value;
+
+      const wo       = wordOrder || 'AB';
+      const combined = (wo === 'AB')
+        ? ((v0 << 16) | v1) >>> 0
+        : ((v1 << 16) | v0) >>> 0;
+
+      if (type === 'uint32') return String(combined);
+      if (type === 'int32')  return String(combined >= 0x80000000 ? combined - 0x100000000 : combined);
+      if (type === 'float32') {
+        const buf = new ArrayBuffer(4);
+        new DataView(buf).setUint32(0, combined);
+        const f = new DataView(buf).getFloat32(0);
+        // 7 significant digits matches IEEE 754 single-precision display fidelity.
+        return isFinite(f) ? parseFloat(f.toPrecision(7)).toString() : String(f);
+      }
+      return null;
     }
 
     // ---- Render table ----
@@ -580,12 +760,19 @@
         return;
       }
 
-      const isBit = (fc === 1 || fc === 2);
-      const thead = '<thead><tr>'
+      const isBit    = (fc === 1 || fc === 2);
+      const device   = selDevice.value;
+      const colspanBI = isBit ? 3 : 7;
+
+      let thead = '<thead><tr>'
         + '<th>Address</th>'
-        + '<th>Decimal</th>'
-        + (isBit ? '' : '<th>Hex</th><th>Binary</th>')
-        + '</tr></thead>';
+        + '<th>Name</th>';
+      if (!isBit) {
+        thead += '<th>Type</th><th>Word&nbsp;Order</th><th>Parsed</th>';
+      }
+      thead += '<th>Decimal</th>';
+      if (!isBit) thead += '<th>Hex</th><th>Binary</th>';
+      thead += '</tr></thead>';
 
       let rows = '';
       lastValues.forEach(({ address, value }) => {
@@ -593,41 +780,158 @@
         const hexStr   = '0x' + value.toString(16).toUpperCase().padStart(4, '0');
         const binStr   = formatBinary(value);
         const rowCls   = isExpanded ? 'selected' : '';
+        const entry    = getEntry(device, fc, address);
+        const name     = entry.name      || '';
+        const type     = entry.type      || '';
+        const wo       = entry.word_order || '';
 
-        rows += '<tr class="' + rowCls + '" data-address="' + address + '">'
-              + '<td class="col-address">' + address + '</td>'
-              + '<td class="col-decimal">' + value + '</td>'
-              + (isBit ? '' : '<td class="col-hex">' + hexStr + '</td>'
-                             + '<td class="col-binary">' + binStr + '</td>')
-              + '</tr>';
+        rows += '<tr class="' + rowCls + '" data-address="' + address + '">';
+        rows += '<td class="col-address">' + address + '</td>';
+
+        // Name cell.
+        const nameCls = name ? 'name-text' : 'name-text empty';
+        rows += '<td class="col-name" data-addr="' + address + '">'
+              + '<span class="' + nameCls + '" data-addr="' + address + '">'
+              + escHtml(name || '\u2014')
+              + '</span></td>';
+
+        if (!isBit) {
+          // Type dropdown.
+          rows += '<td class="col-type"><select class="row-select type-sel" data-addr="' + address + '">';
+          DATA_TYPES.forEach(t => {
+            rows += '<option value="' + t.value + '"' + (t.value === type ? ' selected' : '') + '>' + t.label + '</option>';
+          });
+          rows += '</select></td>';
+
+          // Word Order dropdown (enabled only for 32-bit types).
+          const is32 = (type === 'uint32' || type === 'int32' || type === 'float32');
+          rows += '<td class="col-wordorder"><select class="row-select wo-sel" data-addr="' + address + '"'
+               + (is32 ? '' : ' disabled') + '>';
+          WORD_ORDERS.forEach(w => {
+            rows += '<option value="' + w.value + '"' + (w.value === wo ? ' selected' : '') + '>' + w.label + '</option>';
+          });
+          rows += '</select></td>';
+
+          // Parsed value.
+          const pv = parsedValue(address, type, wo);
+          rows += '<td class="col-parsed">'
+               + (pv !== null ? escHtml(String(pv)) : '<span style="color:#555">\u2014</span>')
+               + '</td>';
+        }
+
+        rows += '<td class="col-decimal">' + value + '</td>';
+        if (!isBit) {
+          rows += '<td class="col-hex">' + hexStr + '</td>'
+               + '<td class="col-binary">' + binStr + '</td>';
+        }
+        rows += '</tr>';
 
         if (isExpanded && !isBit) {
           rows += '<tr class="bit-inspector-row">'
-                + '<td colspan="4">' + buildBitInspector(address, value) + '</td>'
-                + '</tr>';
+               + '<td colspan="' + colspanBI + '">' + buildBitInspector(address, value) + '</td>'
+               + '</tr>';
         }
       });
 
       tableBody.innerHTML = '<table class="reg-table">' + thead + '<tbody>' + rows + '</tbody></table>';
 
-      // Bind row click events.
+      // ---- Bind events after DOM insertion ----
+
+      // Row click for bit inspector (skip Name / Type / Word Order cells).
       tableBody.querySelectorAll('.reg-table tbody tr:not(.bit-inspector-row)').forEach(row => {
-        row.addEventListener('click', function () {
+        row.addEventListener('click', function (e) {
+          if (e.target.closest('.col-name') || e.target.closest('.col-type') || e.target.closest('.col-wordorder')) return;
+          if (fc === 1 || fc === 2) return;
           const addr = parseInt(this.getAttribute('data-address'), 10);
-          const fc2 = parseInt(selFC.value, 10);
-          if (fc2 === 1 || fc2 === 2) return; // No bit inspector for bit areas
-          if (expandedRow === addr) {
-            expandedRow = null;
-          } else {
-            expandedRow = addr;
-          }
-          renderTable(fc2);
-          // Scroll the expanded row into view.
+          expandedRow = (expandedRow === addr) ? null : addr;
+          renderTable(fc);
           if (expandedRow !== null) {
             const sel = tableBody.querySelector('tr.selected');
             if (sel) sel.scrollIntoView({ block: 'nearest' });
           }
         });
+      });
+
+      // Name span click -> inline edit.
+      tableBody.querySelectorAll('.name-text').forEach(span => {
+        attachNameClick(span, device, fc);
+      });
+
+      // Type select change.
+      tableBody.querySelectorAll('.type-sel').forEach(sel => {
+        sel.addEventListener('change', function (e) {
+          e.stopPropagation();
+          const addr  = parseInt(this.getAttribute('data-addr'), 10);
+          const type2 = this.value;
+          const en    = getEntry(device, fc, addr);
+          saveEntry(device, fc, addr, en.name || '', type2, en.word_order || '');
+        });
+      });
+
+      // Word Order select change.
+      tableBody.querySelectorAll('.wo-sel').forEach(sel => {
+        sel.addEventListener('change', function (e) {
+          e.stopPropagation();
+          const addr = parseInt(this.getAttribute('data-addr'), 10);
+          const wo2  = this.value;
+          const en   = getEntry(device, fc, addr);
+          saveEntry(device, fc, addr, en.name || '', en.type || '', wo2);
+        });
+      });
+    }
+
+    // ---- Attach inline-edit click listener to a .name-text span ----
+    function attachNameClick(span, device, fc) {
+      span.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const addr    = parseInt(this.getAttribute('data-addr'), 10);
+        const td      = this.parentElement;
+        const curName = getEntry(device, fc, addr).name || '';
+
+        const inp    = document.createElement('input');
+        inp.type      = 'text';
+        inp.className = 'name-input';
+        inp.value     = curName;
+        inp.maxLength = MAX_NAME_LENGTH;
+        td.replaceChild(inp, this);
+        inp.focus();
+        inp.select();
+
+        let committed = false;
+
+        function commit() {
+          if (committed) return;
+          committed = true;
+          const newName = inp.value.trim();
+          const en2     = getEntry(device, fc, addr);
+          const t2      = en2.type      || '';
+          const w2      = en2.word_order || '';
+          const sp2     = document.createElement('span');
+          sp2.className = newName ? 'name-text' : 'name-text empty';
+          sp2.setAttribute('data-addr', String(addr));
+          sp2.textContent = newName || '\u2014';
+          td.replaceChild(sp2, inp);
+          attachNameClick(sp2, device, fc);
+          saveEntry(device, fc, addr, newName, t2, w2);
+        }
+
+        function cancel() {
+          if (committed) return;
+          committed = true;
+          const nm  = getEntry(device, fc, addr).name || '';
+          const sp2 = document.createElement('span');
+          sp2.className = nm ? 'name-text' : 'name-text empty';
+          sp2.setAttribute('data-addr', String(addr));
+          sp2.textContent = nm || '\u2014';
+          td.replaceChild(sp2, inp);
+          attachNameClick(sp2, device, fc);
+        }
+
+        inp.addEventListener('keydown', ke => {
+          if (ke.key === 'Enter')  { ke.preventDefault(); commit(); }
+          if (ke.key === 'Escape') { cancel(); }
+        });
+        inp.addEventListener('blur', commit);
       });
     }
 
@@ -667,7 +971,7 @@
     }
 
     function escHtml(s) {
-      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
   })();
