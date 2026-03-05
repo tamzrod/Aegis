@@ -1363,3 +1363,21 @@ func TestHandleDeviceStatusMethodNotAllowed(t *testing.T) {
 		t.Fatalf("want 405, got %d", rec.Code)
 	}
 }
+
+// TestHelpPageServed verifies GET /help returns 200 and the help page HTML.
+func TestHelpPageServed(t *testing.T) {
+	mgr := &mockManager{}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/help", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Aegis Documentation") {
+		t.Errorf("expected help page body to contain 'Aegis Documentation', got: %.200s", body)
+	}
+}

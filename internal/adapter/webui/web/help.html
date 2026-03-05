@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aegis — Help</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon/favicon.svg">
+  <link rel="icon" type="image/png" sizes="96x96" href="/favicon/favicon-96x96.png">
+  <link rel="shortcut icon" href="/favicon/favicon.ico">
+  <link rel="apple-touch-icon" sizes="180x180" href="/favicon/apple-touch-icon.png">
+  <link rel="manifest" href="/favicon/site.webmanifest">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="help-page">
+
+  <header class="global-header">
+    <span class="global-header__title"><img src="/favicon/favicon.svg" alt="Aegis" class="header-logo">AEGIS CONTROL</span>
+    <div class="global-header__actions">
+      <a href="/" class="btn-action help-back-btn">← Dashboard</a>
+    </div>
+  </header>
+
+  <div class="help-layout">
+
+    <!-- Left navigation tree -->
+    <nav class="help-nav" id="help-nav">
+      <div class="help-nav__title">Documentation</div>
+      <ul class="help-nav__list">
+        <li><a class="help-nav__link" href="#overview">Overview</a></li>
+        <li><a class="help-nav__link" href="#device-setup">Device Setup</a></li>
+        <li><a class="help-nav__link" href="#source-configuration">Source Configuration</a></li>
+        <li><a class="help-nav__link" href="#reads-configuration">Reads Configuration</a></li>
+        <li><a class="help-nav__link" href="#target-configuration">Target Configuration</a></li>
+        <li><a class="help-nav__link" href="#device-status">Device Status</a></li>
+        <li><a class="help-nav__link" href="#troubleshooting">Troubleshooting</a></li>
+        <li><a class="help-nav__link" href="#about">About Aegis</a></li>
+      </ul>
+    </nav>
+
+    <!-- Main content -->
+    <main class="help-content" id="help-content">
+
+      <div class="help-header">
+        <h1 class="help-title">Aegis Documentation</h1>
+        <p class="help-subtitle">Built-in guide for configuring and operating the Aegis Modbus replication system.</p>
+      </div>
+
+      <!-- Overview -->
+      <section class="help-section" id="overview">
+        <h2 class="help-section__heading">Overview</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">
+          Aegis is a Modbus data replication and fan-out system designed for industrial telemetry, SCADA integration, and edge data distribution.
+        </p>
+        <p class="help-section__body">
+          Aegis polls Modbus devices and republishes the data through configurable Modbus servers.
+        </p>
+      </section>
+
+      <!-- Device Setup -->
+      <section class="help-section" id="device-setup">
+        <h2 class="help-section__heading">Device Setup</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">
+          Each device in Aegis is made up of three parts:
+        </p>
+        <ul class="help-list">
+          <li><strong>Source</strong> — the Modbus device being polled.</li>
+          <li><strong>Reads</strong> — the registers or coils to read from the source.</li>
+          <li><strong>Target</strong> — the Modbus server that republishes the data.</li>
+        </ul>
+      </section>
+
+      <!-- Source Configuration -->
+      <section class="help-section" id="source-configuration">
+        <h2 class="help-section__heading">Source Configuration</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">Configure the upstream Modbus device to poll.</p>
+        <table class="help-table">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="help-field">Device Name</span></td>
+              <td>User-friendly name used to identify the device.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Endpoint</span></td>
+              <td>
+                TCP address of the Modbus device.<br>
+                Format: <code class="help-code">ipaddress:port</code><br>
+                Example: <code class="help-code">192.168.1.100:502</code>
+              </td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Unit ID</span></td>
+              <td>Modbus slave ID of the source device.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Timeout</span></td>
+              <td>Maximum time to wait for a device response.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Reads Configuration -->
+      <section class="help-section" id="reads-configuration">
+        <h2 class="help-section__heading">Reads Configuration</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">Configure the polling schedule and register ranges.</p>
+        <table class="help-table">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="help-field">Function Code</span></td>
+              <td>
+                Supported function codes:
+                <ul class="help-list help-list--compact">
+                  <li><code class="help-code">FC1</code> – Read Coils</li>
+                  <li><code class="help-code">FC2</code> – Read Discrete Inputs</li>
+                  <li><code class="help-code">FC3</code> – Read Holding Registers</li>
+                  <li><code class="help-code">FC4</code> – Read Input Registers</li>
+                </ul>
+              </td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Address</span></td>
+              <td>Starting Modbus address.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Quantity</span></td>
+              <td>Number of registers or coils to read.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Interval</span></td>
+              <td>Polling interval in milliseconds.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Target Configuration -->
+      <section class="help-section" id="target-configuration">
+        <h2 class="help-section__heading">Target Configuration</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">Configure the Modbus replication server that exposes polled data.</p>
+        <table class="help-table">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="help-field">Port</span></td>
+              <td>TCP port where the replicated Modbus server will run. Default: <code class="help-code">502</code></td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Unit ID</span></td>
+              <td>Modbus unit ID exposed by Aegis.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Status Unit ID</span></td>
+              <td>Unit ID used for the status memory block.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Status Slot</span></td>
+              <td>
+                Slot index representing the device inside the status block.<br>
+                Each device must have a unique Status Slot within the same Status Unit ID.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Device Status -->
+      <section class="help-section" id="device-status">
+        <h2 class="help-section__heading">Device Status</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">The status panel shows real-time health metrics for each device.</p>
+        <table class="help-table">
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="help-field">Health</span></td>
+              <td>Indicates current device health state.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Online</span></td>
+              <td>Shows if the device is responding.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Requests Total</span></td>
+              <td>Total Modbus requests sent to the device.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Responses Valid</span></td>
+              <td>Successful responses received.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Timeouts</span></td>
+              <td>Number of request timeouts.</td>
+            </tr>
+            <tr>
+              <td><span class="help-field">Seconds in Error</span></td>
+              <td>How long the device has been in an error state.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <!-- Troubleshooting -->
+      <section class="help-section" id="troubleshooting">
+        <h2 class="help-section__heading">Troubleshooting</h2>
+        <div class="section-divider"></div>
+        <dl class="help-dl">
+          <dt class="help-dl__term">Device not responding</dt>
+          <dd class="help-dl__desc">Check endpoint IP and port.</dd>
+
+          <dt class="help-dl__term">Invalid responses</dt>
+          <dd class="help-dl__desc">Verify correct unit ID and register addresses.</dd>
+
+          <dt class="help-dl__term">Timeout errors</dt>
+          <dd class="help-dl__desc">Increase timeout or verify network connectivity.</dd>
+        </dl>
+      </section>
+
+      <!-- About -->
+      <section class="help-section" id="about">
+        <h2 class="help-section__heading">About Aegis</h2>
+        <div class="section-divider"></div>
+        <p class="help-section__body">
+          Aegis is a Modbus replication and fan-out system designed for reliable industrial telemetry and SCADA integration.
+        </p>
+        <p class="help-section__body help-credits">
+          Developed by<br>
+          <strong>Rodelito N. Tamin</strong>
+        </p>
+        <p class="help-section__body help-copyright">© 2026</p>
+      </section>
+
+    </main>
+  </div>
+
+  <script>
+    // Highlight the active nav link based on scroll position.
+    (function () {
+      var sections = document.querySelectorAll('.help-section');
+      var links = document.querySelectorAll('.help-nav__link');
+      var content = document.getElementById('help-content');
+
+      function onScroll() {
+        var scrollTop = content.scrollTop;
+        var active = null;
+        sections.forEach(function (sec) {
+          if (sec.offsetTop - content.offsetTop <= scrollTop + 80) {
+            active = sec.id;
+          }
+        });
+        links.forEach(function (a) {
+          var target = a.getAttribute('href').slice(1);
+          a.classList.toggle('help-nav__link--active', target === active);
+        });
+      }
+
+      content.addEventListener('scroll', onScroll);
+      onScroll();
+
+      // Smooth scroll to section on nav click.
+      links.forEach(function (a) {
+        a.addEventListener('click', function (e) {
+          e.preventDefault();
+          var id = a.getAttribute('href').slice(1);
+          var target = document.getElementById(id);
+          if (target) {
+            content.scrollTo({ top: target.offsetTop - content.offsetTop - 16, behavior: 'smooth' });
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
