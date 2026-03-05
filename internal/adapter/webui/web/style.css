@@ -244,6 +244,26 @@ select.field-input {
 }
 
 /* ---- Reads list ---- */
+.reads-container {
+  max-height: 300px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #3d3d6e #0d0d1a;
+}
+
+.reads-container::-webkit-scrollbar {
+  width: 6px;
+}
+
+.reads-container::-webkit-scrollbar-track {
+  background: #0d0d1a;
+}
+
+.reads-container::-webkit-scrollbar-thumb {
+  background-color: #3d3d6e;
+  border-radius: 3px;
+}
+
 .reads-list {
   list-style: none;
   display: flex;

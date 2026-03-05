@@ -534,7 +534,10 @@ function renderReadsList(device, editIndex) {
   });
 
   content.innerHTML = '';
-  content.appendChild(ul);
+  const container = document.createElement('div');
+  container.className = 'reads-container';
+  container.appendChild(ul);
+  content.appendChild(container);
 }
 
 // ---------- Device Status panel ----------
