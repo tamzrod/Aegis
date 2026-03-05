@@ -129,6 +129,9 @@ func NewServer(listen string, mgr Manager, auth config.AuthConfig) *Server {
 	protected.HandleFunc("/change-password", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, webFS, "change-password.html")
 	})
+	protected.HandleFunc("/help", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, webFS, "help.html")
+	})
 	protected.HandleFunc("/api/change-password", h.handleChangePassword)
 	protected.HandleFunc("/api/config/view", h.handleConfigView)
 	protected.HandleFunc("/api/config/apply", h.handleConfigApply)
