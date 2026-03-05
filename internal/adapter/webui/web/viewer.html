@@ -677,6 +677,9 @@
           if (devices.length > 0) {
             selDevice.value = devices[0].key;
             onDeviceChange();
+            // Automatically perform a single read on page load so the table
+            // is populated immediately (equivalent to pressing the Read button).
+            doRead();
           }
         })
         .catch(err => {
