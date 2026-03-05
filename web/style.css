@@ -248,6 +248,11 @@ header h1 {
     font-size: 13px;
 }
 
+.reads-container {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
 .reads-list {
     display: flex;
     flex-direction: column;
