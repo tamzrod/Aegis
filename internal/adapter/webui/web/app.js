@@ -1099,7 +1099,7 @@ function makeDeviceLi(d) {
   return li;
 }
 
-const MAX_SEGMENTS = 30;
+const MAX_SEGMENTS = 20;
 
 // buildGroupHealthBar returns a document fragment containing a segmented health
 // bar and an online/total count label for the supplied devices.
