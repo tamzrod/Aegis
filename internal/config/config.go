@@ -80,6 +80,7 @@ type ReplicatorConfig struct {
 // UnitConfig describes a single upstream device poll loop.
 type UnitConfig struct {
 	ID     string       `yaml:"id"`
+	Group  string       `yaml:"group,omitempty"`
 	Source SourceConfig `yaml:"source"`
 	Reads  []ReadConfig `yaml:"reads"`
 	Target TargetConfig `yaml:"target"`

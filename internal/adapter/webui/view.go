@@ -18,6 +18,7 @@ type configView struct {
 type deviceView struct {
 	Key         string     `json:"key"`
 	DisplayName string     `json:"display_name"`
+	Group       string     `json:"group,omitempty"`
 	Source      sourceView `json:"source"`
 	Reads       []readView `json:"reads"`
 	Target      targetView `json:"target"`
@@ -78,6 +79,7 @@ func buildConfigView(cfg *config.Config) configView {
 		devices = append(devices, deviceView{
 			Key:         u.ID,
 			DisplayName: name,
+			Group:       u.Group,
 			Source: sourceView{
 				Endpoint:   u.Source.Endpoint,
 				UnitID:     u.Source.UnitID,
