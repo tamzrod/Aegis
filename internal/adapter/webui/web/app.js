@@ -16,6 +16,7 @@ let originalConfig    = null;   // last-applied config (from server)
 let workingConfig     = null;   // working copy (modified locally before apply)
 let selectedDeviceKey = null;   // key of the device currently shown in the right panel
 let deviceStatuses    = {};     // maps device key → status string ("online", "error", "offline", "warning")
+const groupOpenStates = new Map(); // maps group key → open bool (persists across re-renders)
 
 // ---------- helpers ----------
 function deepCopy(obj) {
@@ -1098,6 +1099,54 @@ function makeDeviceLi(d) {
   return li;
 }
 
+// buildGroupStatusSummary returns a <span> showing a compact per-status dot
+// count for the supplied devices.  It is only visible when the group is
+// collapsed (CSS hides it when details[open]).
+function buildGroupStatusSummary(devices) {
+  const counts = {};
+  devices.forEach(d => {
+    const s = (deviceStatuses[d.key] || {}).status || 'offline';
+    counts[s] = (counts[s] || 0) + 1;
+  });
+
+  const wrap = document.createElement('span');
+  wrap.className = 'group-status-summary';
+
+  ['online', 'warning', 'error', 'offline'].forEach(s => {
+    if (!counts[s]) return;
+    const item = document.createElement('span');
+    item.className = 'group-status-item';
+
+    const dot = document.createElement('span');
+    dot.className = 'device-status-dot device-' + s;
+
+    const cnt = document.createElement('span');
+    cnt.className = 'group-status-count';
+    cnt.textContent = counts[s];
+
+    item.appendChild(dot);
+    item.appendChild(cnt);
+    wrap.appendChild(item);
+  });
+
+  return wrap;
+}
+
+// autoCollapseGroups collapses device groups from the bottom of the list
+// until the device-list element no longer overflows its container.
+function autoCollapseGroups() {
+  const list = document.getElementById('device-list');
+  if (!list) return;
+
+  const allDetails = Array.from(list.querySelectorAll('li.device-group > details'));
+  for (let i = allDetails.length - 1; i >= 0; i--) {
+    if (list.scrollHeight <= list.clientHeight) break;
+    if (!allDetails[i].open) continue;
+    allDetails[i].open = false;
+    groupOpenStates.set(allDetails[i].dataset.groupKey, false);
+  }
+}
+
 function renderDeviceList() {
   const list = document.getElementById('device-list');
   list.innerHTML = '';
@@ -1122,11 +1171,23 @@ function renderDeviceList() {
     groupLi.className = 'device-group';
 
     const details  = document.createElement('details');
-    details.open   = true;
+    details.dataset.groupKey = gName;
+    // Restore previously saved open state; new groups default to open.
+    details.open = groupOpenStates.has(gName) ? groupOpenStates.get(gName) : true;
+    details.addEventListener('toggle', () => {
+      groupOpenStates.set(details.dataset.groupKey, details.open);
+    });
 
     const summary  = document.createElement('summary');
-    summary.className   = 'device-group-header';
-    summary.textContent = label;
+    summary.className = 'device-group-header';
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'group-label';
+    labelSpan.textContent = label;
+    summary.appendChild(labelSpan);
+
+    summary.appendChild(buildGroupStatusSummary(devices));
+
     details.appendChild(summary);
 
     const subUl = document.createElement('ul');
@@ -1137,6 +1198,10 @@ function renderDeviceList() {
     groupLi.appendChild(details);
     list.appendChild(groupLi);
   });
+
+  // After the browser has applied the new layout, collapse bottom groups if
+  // the list overflows the sidebar height.
+  requestAnimationFrame(autoCollapseGroups);
 }
 
 function selectDevice(key) {

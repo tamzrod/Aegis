@@ -211,6 +211,30 @@ details[open] > .device-group-header::before {
   padding-left: 1.75rem;
 }
 
+/* ---- Group status summary (shown only when group is collapsed) ---- */
+
+details[open] .group-status-summary {
+  display: none;
+}
+
+.group-status-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+
+.group-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.group-status-count {
+  font-size: 0.7rem;
+  color: #9aabb8;
+}
+
 .panel-actions {
   display: flex;
   gap: 0.4rem;
