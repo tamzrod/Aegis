@@ -1156,6 +1156,53 @@ function buildGroupHealthBar(devices) {
   return wrap;
 }
 
+// renderGlobalHealthIndicator updates the header indicator that shows
+// good / total devices and a segmented bar (up to MAX_SEGMENTS = 20).
+// EXACT MODE  (total ≤ MAX_SEGMENTS): one segment per device.
+// PERCENTAGE MODE (total > MAX_SEGMENTS): bar normalised to MAX_SEGMENTS.
+function renderGlobalHealthIndicator() {
+  const el = document.getElementById('global-health-indicator');
+  if (!el) return;
+  if (!workingConfig || !workingConfig.devices || workingConfig.devices.length === 0) {
+    el.innerHTML = '';
+    return;
+  }
+
+  const devices = workingConfig.devices;
+  const total   = devices.length;
+  const good    = devices.filter(d => (deviceStatuses[d.key] || {}).status === 'online').length;
+
+  el.innerHTML = '';
+
+  const bar = document.createElement('span');
+  bar.className = 'global-health-bar';
+
+  if (total <= MAX_SEGMENTS) {
+    // EXACT MODE — one segment per device
+    devices.forEach(d => {
+      const seg = document.createElement('span');
+      const isOnline = (deviceStatuses[d.key] || {}).status === 'online';
+      seg.className = 'global-health-segment ' + (isOnline ? 'ghs-on' : 'ghs-off');
+      bar.appendChild(seg);
+    });
+  } else {
+    // PERCENTAGE MODE — normalise to MAX_SEGMENTS
+    const greenCount = Math.round((good / total) * MAX_SEGMENTS);
+    for (let i = 0; i < MAX_SEGMENTS; i++) {
+      const seg = document.createElement('span');
+      seg.className = 'global-health-segment ' + (i < greenCount ? 'ghs-on' : 'ghs-off');
+      bar.appendChild(seg);
+    }
+  }
+
+  const countLabel = document.createElement('span');
+  countLabel.className = 'global-health-count';
+  countLabel.textContent = good + ' / ' + total;
+
+  el.appendChild(bar);
+  el.appendChild(countLabel);
+}
+
 // autoCollapseGroups collapses device groups from the bottom of the list
 // until the device-list element no longer overflows its container.
 function autoCollapseGroups() {
@@ -1241,6 +1288,7 @@ function selectDevice(key) {
 
 function renderAll() {
   renderDeviceList();
+  renderGlobalHealthIndicator();
   const keyToSelect = selectedDeviceKey || workingConfig.selected_key;
   if (keyToSelect && workingConfig.devices.find(d => d.key === keyToSelect)) {
     selectDevice(keyToSelect);
@@ -1502,7 +1550,10 @@ loadView();
 loadDeviceStatuses();
 const _statusPollId = setInterval(async () => {
   await loadDeviceStatuses();
-  if (workingConfig) renderDeviceList();
+  if (workingConfig) {
+    renderDeviceList();
+    renderGlobalHealthIndicator();
+  }
 }, 5000);
 
 // ---------- User menu ----------

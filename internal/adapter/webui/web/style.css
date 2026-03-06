@@ -40,6 +40,35 @@ body {
   gap: 0.75rem;
 }
 
+/* ---- Global device health indicator (header) ---- */
+.global-health-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  justify-content: center;
+}
+
+.global-health-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.global-health-segment {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
+.global-health-count {
+  font-size: 0.78rem;
+  color: #9aabb8;
+  white-space: nowrap;
+}
+
 /* ---- Right panel ---- */
 .right-panel {
   flex: 1;
