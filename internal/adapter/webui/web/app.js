@@ -34,17 +34,20 @@ function getSelectedDeviceIndex() {
 }
 
 // nextAvailableSlot finds the lowest status slot not used by any other device
-// sharing the same status_unit_id. The device identified by excludeKey is excluded
-// from the check so that re-opening its own edit form does not produce a collision.
-function nextAvailableSlot(devices, statusUnitId, excludeKey) {
+// sharing the same (port, status_unit_id). The device identified by excludeKey is
+// excluded from the check so that re-opening its own edit form does not produce a
+// collision. Returns null when all uint16 slots (0–65535) are exhausted.
+function nextAvailableSlot(devices, port, statusUnitId, excludeKey) {
   const used = new Set(
     (devices || [])
-      .filter(d => d.key !== excludeKey && d.target && d.target.status_unit_id === statusUnitId)
+      .filter(d => d.key !== excludeKey && d.target &&
+                   d.target.port === port && d.target.status_unit_id === statusUnitId)
       .map(d => d.target.status_slot)
   );
-  let slot = 0;
-  while (used.has(slot)) slot++;
-  return slot;
+  for (let slot = 0; slot <= 65535; slot++) {
+    if (!used.has(slot)) return slot;
+  }
+  return null;
 }
 
 // nextAvailableUnitId finds the lowest unit_id (1–247) not already used by another
@@ -64,13 +67,14 @@ function nextAvailableUnitId(devices, port, excludeKey) {
 }
 
 // validateStatusSlotConflicts returns an error string if any two devices in the
-// list share the same (status_unit_id, status_slot), or null if there is no conflict.
+// list share the same (port, status_unit_id, status_slot), or null if there is no
+// conflict. This matches the uniqueness constraint enforced by the backend validator.
 function validateStatusSlotConflicts(devices) {
   const seen = new Map();
   for (const d of devices) {
     const tgt = d.target || {};
     if (!tgt.status_unit_id) continue;
-    const k = `${tgt.status_unit_id}:${tgt.status_slot}`;
+    const k = `${tgt.port}:${tgt.status_unit_id}:${tgt.status_slot}`;
     if (seen.has(k)) {
       return 'Status slot already used by another device.';
     }
@@ -340,7 +344,7 @@ function renderTargetEdit(device) {
   const currentPort = tgt.port || 502;
   const sharedSuid = getSharedStatusUnitId(workingConfig.devices, currentPort, device.key);
   const statusUnitIdDefault = sharedSuid || tgt.status_unit_id || 100;
-  const autoSlot = nextAvailableSlot(workingConfig.devices, statusUnitIdDefault, device.key);
+  const autoSlot = nextAvailableSlot(workingConfig.devices, currentPort, statusUnitIdDefault, device.key);
   const numFields = [
     { label: 'Port',           key: 'port',           value: currentPort },
     { label: 'Unit ID',        key: 'unit_id',        value: tgt.unit_id        ?? 0 },
@@ -393,32 +397,43 @@ function renderTargetEdit(device) {
 
   applyStatusUnitIdLock(currentPort);
 
-  function updateSlotHint(statusUnitId) {
+  function updateSlotHint(port, statusUnitId) {
     if (!slotHintEl) return;
     const used = (workingConfig.devices || [])
-      .filter(d => d.key !== device.key && d.target && d.target.status_unit_id === statusUnitId)
+      .filter(d => d.key !== device.key && d.target &&
+                   d.target.port === port && d.target.status_unit_id === statusUnitId)
       .map(d => d.target.status_slot)
       .sort((a, b) => a - b);
-    slotHintEl.textContent = used.length > 0 ? ' Used: ' + used.join(', ') : '';
+    const available = nextAvailableSlot(workingConfig.devices, port, statusUnitId, device.key);
+    if (available === null) {
+      slotHintEl.textContent = ' No available status slots for this port and status_unit_id.';
+    } else {
+      slotHintEl.textContent = used.length > 0 ? ' Used: ' + used.join(', ') : '';
+    }
   }
 
-  updateSlotHint(statusUnitIdDefault);
+  updateSlotHint(currentPort, statusUnitIdDefault);
 
   // When the port changes, re-evaluate the shared status_unit_id lock.
   inputs['port'].addEventListener('input', () => {
     const port = parseInt(inputs['port'].value, 10) || 0;
     applyStatusUnitIdLock(port);
     const uid = parseInt(inputs['status_unit_id'].value, 10) || 0;
-    const next = nextAvailableSlot(workingConfig.devices, uid, device.key);
-    inputs['status_slot'].value = next;
-    updateSlotHint(uid);
+    const next = nextAvailableSlot(workingConfig.devices, port, uid, device.key);
+    if (next !== null) {
+      inputs['status_slot'].value = next;
+    }
+    updateSlotHint(port, uid);
   });
 
   inputs['status_unit_id'].addEventListener('input', () => {
+    const port = parseInt(inputs['port'].value, 10) || 0;
     const uid = parseInt(inputs['status_unit_id'].value, 10) || 0;
-    const next = nextAvailableSlot(workingConfig.devices, uid, device.key);
-    inputs['status_slot'].value = next;
-    updateSlotHint(uid);
+    const next = nextAvailableSlot(workingConfig.devices, port, uid, device.key);
+    if (next !== null) {
+      inputs['status_slot'].value = next;
+    }
+    updateSlotHint(port, uid);
   });
 
   // Mode dropdown
@@ -1391,7 +1406,11 @@ document.getElementById('btn-add').addEventListener('click', () => {
     return;
   }
   const defaultStatusUnitId = 100;
-  const autoSlot = nextAvailableSlot(workingConfig.devices, defaultStatusUnitId, key);
+  const autoSlot = nextAvailableSlot(workingConfig.devices, defaultPort, defaultStatusUnitId, key);
+  if (autoSlot === null) {
+    showToast('No available status slots for this port and status_unit_id.');
+    return;
+  }
 
   // Build suggested name and clone reads when a source device exists.
   let suggestedName = '';
