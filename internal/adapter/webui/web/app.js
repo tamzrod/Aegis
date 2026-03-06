@@ -679,16 +679,26 @@ function latencyColorClass(ms) {
 function renderDeviceSummaryCard(device, runtimeState) {
   const section = document.getElementById('device-summary-section');
   const content = document.getElementById('device-summary-content');
+  const actEl   = document.getElementById('device-summary-actions');
   if (!device) {
     section.style.display = 'none';
     content.innerHTML = '';
+    actEl.innerHTML = '';
     return;
   }
   section.style.display = '';
 
+  actEl.innerHTML = '';
+  const btnEdit = document.createElement('button');
+  btnEdit.className = 'btn-sm';
+  btnEdit.textContent = 'Edit';
+  btnEdit.addEventListener('click', () => renderDeviceSummaryEdit(device));
+  actEl.appendChild(btnEdit);
+
   const src = device.source || {};
   const statusObj = deviceStatuses[device.key] || { status: 'offline' };
   const runtimeLabel = runtimeState || statusObj.status || 'offline';
+  const groupLabel = device.group || '—';
 
   const table = document.createElement('table');
   table.className = 'field-table';
@@ -696,6 +706,7 @@ function renderDeviceSummaryCard(device, runtimeState) {
     ['Name',     src.device_name || device.display_name || device.key],
     ['Endpoint', src.endpoint    || '—'],
     ['Unit ID',  src.unit_id     ?? '—'],
+    ['Group',    groupLabel],
     ['Runtime',  runtimeLabel],
   ].forEach(([label, value]) => {
     const tr = document.createElement('tr');
@@ -717,6 +728,102 @@ function renderDeviceSummaryCard(device, runtimeState) {
 
   content.innerHTML = '';
   content.appendChild(table);
+}
+
+// renderDeviceSummaryEdit puts the Device summary section into edit mode,
+// allowing the user to assign or create a group for the selected device.
+function renderDeviceSummaryEdit(device) {
+  const actEl = document.getElementById('device-summary-actions');
+  actEl.innerHTML = '';
+  const btnSave   = document.createElement('button');
+  btnSave.className = 'btn-sm btn-save';
+  btnSave.textContent = 'Save';
+  const btnCancel = document.createElement('button');
+  btnCancel.className = 'btn-sm';
+  btnCancel.textContent = 'Cancel';
+  actEl.appendChild(btnSave);
+  actEl.appendChild(btnCancel);
+
+  const content = document.getElementById('device-summary-content');
+  const table   = document.createElement('table');
+  table.className = 'field-table';
+
+  // Collect unique, non-empty group names from all devices in the working config.
+  const existingGroups = [...new Set(
+    (workingConfig.devices || [])
+      .map(d => d.group || '')
+      .filter(g => g !== '')
+  )].sort();
+
+  const groupTr = document.createElement('tr');
+  const groupTh = document.createElement('th');
+  groupTh.textContent = 'Group';
+  const groupTd = document.createElement('td');
+
+  const groupSel = document.createElement('select');
+  groupSel.className = 'field-input';
+
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = '— None (Ungrouped) —';
+  groupSel.appendChild(noneOpt);
+
+  existingGroups.forEach(g => {
+    const opt = document.createElement('option');
+    opt.value = g;
+    opt.textContent = g;
+    groupSel.appendChild(opt);
+  });
+
+  const createOpt = document.createElement('option');
+  createOpt.value = '__create__';
+  createOpt.textContent = '+ Create new group';
+  groupSel.appendChild(createOpt);
+
+  groupSel.value = device.group || '';
+  groupTd.appendChild(groupSel);
+
+  const newGroupInp = document.createElement('input');
+  newGroupInp.className = 'field-input';
+  newGroupInp.type = 'text';
+  newGroupInp.placeholder = 'New group name';
+  newGroupInp.style.display = 'none';
+  newGroupInp.style.marginTop = '0.3rem';
+  groupTd.appendChild(newGroupInp);
+
+  groupTr.appendChild(groupTh);
+  groupTr.appendChild(groupTd);
+  table.appendChild(groupTr);
+
+  content.innerHTML = '';
+  content.appendChild(table);
+
+  groupSel.addEventListener('change', () => {
+    const isCreate = groupSel.value === '__create__';
+    newGroupInp.style.display = isCreate ? '' : 'none';
+    if (isCreate) newGroupInp.focus();
+  });
+
+  btnSave.addEventListener('click', () => {
+    const groupValue = groupSel.value === '__create__'
+      ? newGroupInp.value.trim()
+      : groupSel.value;
+    if (groupSel.value === '__create__' && !groupValue) {
+      newGroupInp.focus();
+      return;
+    }
+    const idx = getSelectedDeviceIndex();
+    if (idx < 0) return;
+    if (groupValue) {
+      workingConfig.devices[idx].group = groupValue;
+    } else {
+      delete workingConfig.devices[idx].group;
+    }
+    renderDeviceList();
+    renderDeviceSummaryCard(workingConfig.devices[idx], null);
+  });
+
+  btnCancel.addEventListener('click', () => renderDeviceSummaryCard(device, null));
 }
 
 function renderDeviceStatusPanel(data) {
