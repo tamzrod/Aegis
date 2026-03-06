@@ -269,6 +269,54 @@ replicator:
 	}
 }
 
+// TestGetConfigViewWithGroup verifies that the group field is included in the
+// device view when the unit config declares a group.
+func TestGetConfigViewWithGroup(t *testing.T) {
+	yaml := []byte(`
+replicator:
+  units:
+    - id: plc1
+      group: "Site A"
+      source:
+        endpoint: "192.168.1.100:502"
+        unit_id: 1
+        timeout_ms: 1000
+        device_name: "PLC1"
+      reads:
+        - fc: 3
+          address: 0
+          quantity: 10
+          interval_ms: 1000
+      target:
+        port: 502
+        unit_id: 1
+        status_unit_id: 255
+        status_slot: 0
+        mode: "B"
+`)
+	mgr := &mockManager{yaml: yaml}
+	h := newTestServer(mgr)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/view", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var view configView
+	if err := json.NewDecoder(rec.Body).Decode(&view); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(view.Devices) != 1 {
+		t.Fatalf("want 1 device, got %d", len(view.Devices))
+	}
+	if got := view.Devices[0].Group; got != "Site A" {
+		t.Errorf("device group: want %q, got %q", "Site A", got)
+	}
+}
+
 // TestGetConfigViewMethodNotAllowed verifies that POST /api/config/view returns 405.
 func TestGetConfigViewMethodNotAllowed(t *testing.T) {
 	mgr := &mockManager{yaml: []byte(`replicator: {units: []}`)}
@@ -345,6 +393,53 @@ func TestPutConfigApplySuccess(t *testing.T) {
 		t.Errorf("want status=applied, got %q", resp["status"])
 	}
 }
+
+// TestPutConfigApplyPreservesGroup verifies that the group field submitted in a
+// configView body is persisted into the YAML passed to ApplyConfig.
+func TestPutConfigApplyPreservesGroup(t *testing.T) {
+	gcm := &groupCaptureMgrManager{yaml: []byte(validUnitYAML)}
+	h := newTestServer(gcm)
+
+	body := `{
+		"devices": [{
+			"key": "plc1",
+			"display_name": "PLC1",
+			"group": "Site A",
+			"source": {"endpoint":"192.168.1.100:502","unit_id":1,"timeout_ms":1000,"device_name":"PLC1"},
+			"reads":  [{"fc":3,"address":0,"quantity":10,"interval_ms":1000}],
+			"target": {"port":502,"unit_id":1,"status_unit_id":255,"status_slot":0,"mode":"B"}
+		}],
+		"selected_key": "plc1"
+	}`
+
+	req := httptest.NewRequest(http.MethodPut, "/api/config/apply", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(string(gcm.appliedYAML), "group: Site A") {
+		t.Errorf("applied YAML does not contain group field; got:\n%s", gcm.appliedYAML)
+	}
+}
+
+// groupCaptureMgrManager captures the YAML bytes passed to ApplyConfig and
+// satisfies the Manager interface.
+type groupCaptureMgrManager struct {
+	yaml        []byte
+	appliedYAML []byte
+}
+
+func (m *groupCaptureMgrManager) GetActiveConfigYAML() []byte { return m.yaml }
+func (m *groupCaptureMgrManager) ApplyConfig(b []byte) error {
+	m.appliedYAML = b
+	return nil
+}
+func (m *groupCaptureMgrManager) ReloadFromDisk() error                    { return nil }
+func (m *groupCaptureMgrManager) Rebuild(_ *config.Config, _ []byte) error { return nil }
+func (m *groupCaptureMgrManager) StartRuntime() error                      { return nil }
+func (m *groupCaptureMgrManager) StopRuntime() error                       { return nil }
 
 // TestPutConfigApplyValidationFailure verifies that PUT /api/config/apply returns
 // 400 with a JSON error body when the manager rejects the config.
