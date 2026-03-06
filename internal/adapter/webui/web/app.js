@@ -968,30 +968,75 @@ function renderDevice(device) {
 
 // ---------- Device list ----------
 
+function makeDeviceLi(d) {
+  const li = document.createElement('li');
+
+  // Status dot
+  const dot = document.createElement('span');
+  const statusObj = deviceStatuses[d.key] || { status: 'offline', polling: false };
+  dot.className = 'device-status-dot device-' + statusObj.status;
+  if (statusObj.polling) {
+    dot.classList.add('device-blink');
+    setTimeout(() => dot.classList.remove('device-blink'), 250);
+  }
+  li.appendChild(dot);
+
+  const nameSpan = document.createElement('span');
+  nameSpan.textContent = d.display_name || d.key;
+  li.appendChild(nameSpan);
+
+  li.dataset.key = d.key;
+  if (d.key === selectedDeviceKey) li.classList.add('selected');
+  li.addEventListener('click', () => selectDevice(d.key));
+  return li;
+}
+
 function renderDeviceList() {
   const list = document.getElementById('device-list');
   list.innerHTML = '';
+
+  const hasAnyGroup = workingConfig.devices.some(d => d.group);
+
+  if (!hasAnyGroup) {
+    // Flat list — original behaviour when no device defines a group.
+    workingConfig.devices.forEach(d => list.appendChild(makeDeviceLi(d)));
+    return;
+  }
+
+  // Grouped view: build a Map of groupName → devices[].
+  const groups = new Map();
   workingConfig.devices.forEach(d => {
-    const li = document.createElement('li');
+    const g = d.group || '';
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(d);
+  });
 
-    // Status dot
-    const dot = document.createElement('span');
-    const statusObj = deviceStatuses[d.key] || { status: 'offline', polling: false };
-    dot.className = 'device-status-dot device-' + statusObj.status;
-    if (statusObj.polling) {
-      dot.classList.add('device-blink');
-      setTimeout(() => dot.classList.remove('device-blink'), 250);
-    }
-    li.appendChild(dot);
+  // Named groups alphabetically, then the ungrouped bucket last.
+  const namedGroups   = [...groups.keys()].filter(g => g !== '').sort();
+  const orderedGroups = groups.has('') ? [...namedGroups, ''] : namedGroups;
 
-    const nameSpan = document.createElement('span');
-    nameSpan.textContent = d.display_name || d.key;
-    li.appendChild(nameSpan);
+  orderedGroups.forEach(gName => {
+    const devices = groups.get(gName);
+    const label   = gName || 'Ungrouped';
 
-    li.dataset.key = d.key;
-    if (d.key === selectedDeviceKey) li.classList.add('selected');
-    li.addEventListener('click', () => selectDevice(d.key));
-    list.appendChild(li);
+    const groupLi  = document.createElement('li');
+    groupLi.className = 'device-group';
+
+    const details  = document.createElement('details');
+    details.open   = true;
+
+    const summary  = document.createElement('summary');
+    summary.className   = 'device-group-header';
+    summary.textContent = label;
+    details.appendChild(summary);
+
+    const subUl = document.createElement('ul');
+    subUl.className = 'device-group-list';
+    devices.forEach(d => subUl.appendChild(makeDeviceLi(d)));
+    details.appendChild(subUl);
+
+    groupLi.appendChild(details);
+    list.appendChild(groupLi);
   });
 }
 

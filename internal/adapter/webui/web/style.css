@@ -150,6 +150,67 @@ body {
   color: #a0c4ff;
 }
 
+/* ---- Device groups (collapsible folders) ---- */
+
+.device-group {
+  padding: 0;
+  border-left: none;
+  display: block;
+  cursor: default;
+}
+
+.device-group:hover {
+  background: transparent;
+}
+
+.device-group-header {
+  padding: 0.4rem 0.75rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #6b7db3;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  user-select: none;
+  border-left: 3px solid transparent;
+}
+
+.device-group-header:hover {
+  color: #a0c4ff;
+  background: #12152a;
+}
+
+.device-group-header::marker,
+.device-group-header::-webkit-details-marker {
+  display: none;
+}
+
+.device-group-header::before {
+  content: '▶';
+  font-size: 0.55rem;
+  display: inline-block;
+  transition: transform 0.15s;
+  color: #6b7db3;
+}
+
+details[open] > .device-group-header::before {
+  transform: rotate(90deg);
+}
+
+.device-group-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.device-group-list li {
+  padding-left: 1.75rem;
+}
+
 .panel-actions {
   display: flex;
   gap: 0.4rem;
