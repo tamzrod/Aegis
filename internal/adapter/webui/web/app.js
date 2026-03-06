@@ -1102,15 +1102,7 @@ function renderDeviceList() {
   const list = document.getElementById('device-list');
   list.innerHTML = '';
 
-  const hasAnyGroup = workingConfig.devices.some(d => d.group);
-
-  if (!hasAnyGroup) {
-    // Flat list — original behaviour when no device defines a group.
-    workingConfig.devices.forEach(d => list.appendChild(makeDeviceLi(d)));
-    return;
-  }
-
-  // Grouped view: build a Map of groupName → devices[].
+  // Always use grouped view. Devices without a group appear under "Ungrouped" last.
   const groups = new Map();
   workingConfig.devices.forEach(d => {
     const g = d.group || '';
