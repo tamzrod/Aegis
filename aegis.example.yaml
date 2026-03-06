@@ -11,6 +11,9 @@
 replicator:
   units:
     - id: "plc1"
+      # group: "Site A"   # Optional label used to visually group devices in the WebUI.
+      #                   # Devices that share a group name are shown under a collapsible
+      #                   # folder in the device list.  Omit or leave empty for no grouping.
       source:
         endpoint: "192.168.1.100:502"
         unit_id: 1

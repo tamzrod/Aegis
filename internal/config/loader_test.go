@@ -263,3 +263,60 @@ auth:
 	}
 }
 
+// TestLoadBytesGroupPreserved verifies that a group field on a unit is parsed and
+// retained without modification by LoadBytes.
+func TestLoadBytesGroupPreserved(t *testing.T) {
+	yaml := []byte(`
+replicator:
+  units:
+    - id: plc1
+      group: "Site A"
+      source:
+        endpoint: "192.168.1.1:502"
+        timeout_ms: 1000
+      reads:
+        - fc: 3
+          address: 0
+          quantity: 10
+          interval_ms: 1000
+      target:
+        port: 502
+        unit_id: 1
+`)
+	cfg, err := LoadBytes(yaml)
+	if err != nil {
+		t.Fatalf("LoadBytes: unexpected error: %v", err)
+	}
+	if got := cfg.Replicator.Units[0].Group; got != "Site A" {
+		t.Errorf("Group: want %q, got %q", "Site A", got)
+	}
+}
+
+// TestLoadBytesGroupOmitted verifies that a unit without a group field has an
+// empty Group string after loading.
+func TestLoadBytesGroupOmitted(t *testing.T) {
+	yaml := []byte(`
+replicator:
+  units:
+    - id: plc1
+      source:
+        endpoint: "192.168.1.1:502"
+        timeout_ms: 1000
+      reads:
+        - fc: 3
+          address: 0
+          quantity: 10
+          interval_ms: 1000
+      target:
+        port: 502
+        unit_id: 1
+`)
+	cfg, err := LoadBytes(yaml)
+	if err != nil {
+		t.Fatalf("LoadBytes: unexpected error: %v", err)
+	}
+	if got := cfg.Replicator.Units[0].Group; got != "" {
+		t.Errorf("Group: want empty string, got %q", got)
+	}
+}
+
