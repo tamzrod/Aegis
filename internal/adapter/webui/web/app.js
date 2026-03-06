@@ -1539,3 +1539,67 @@ const _statusPollId = setInterval(async () => {
     window.location.href = '/login';
   });
 }());
+
+// ---------- Sidebar resize ----------
+(function () {
+  const handle   = document.getElementById('sidebar-resize-handle');
+  const panel    = document.getElementById('left-panel');
+  if (!handle || !panel) return;
+
+  const MIN_WIDTH     = 240;
+  const MAX_WIDTH     = 380;
+  const STORAGE_KEY   = 'aegis_sidebar_width';
+
+  // Restore persisted width.
+  const saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
+  if (saved >= MIN_WIDTH && saved <= MAX_WIDTH) {
+    panel.style.width = saved + 'px';
+  }
+
+  let dragging   = false;
+  let startX     = 0;
+  let startWidth = 0;
+  let rafPending = false;
+  let lastClientX = 0;
+
+  function applyWidth() {
+    rafPending = false;
+    if (!dragging) return;
+    const delta    = lastClientX - startX;
+    const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
+    panel.style.width = newWidth + 'px';
+  }
+
+  function stopDrag() {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('resizing');
+    document.body.style.cursor     = '';
+    document.body.style.userSelect = '';
+    localStorage.setItem(STORAGE_KEY, String(panel.offsetWidth));
+  }
+
+  handle.addEventListener('mousedown', function (e) {
+    dragging   = true;
+    startX     = e.clientX;
+    startWidth = panel.offsetWidth;
+    handle.classList.add('resizing');
+    document.body.style.cursor     = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    lastClientX = e.clientX;
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(applyWidth);
+    }
+  });
+
+  document.addEventListener('mouseup', stopDrag);
+
+  // Commit the final size when the pointer leaves the browser window.
+  document.addEventListener('mouseleave', stopDrag);
+}());
