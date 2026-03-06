@@ -1309,14 +1309,81 @@ document.getElementById('btn-restart-runtime').addEventListener('click', async (
 
 // ---------- Add Device ----------
 
+// suggestNextName returns the name with its trailing numeric suffix incremented by 1,
+// preserving zero-padding width (e.g. "SCB01" → "SCB02", "Device9" → "Device10").
+// If there is no numeric suffix, "2" is appended (e.g. "SCB" → "SCB2").
+function suggestNextName(name) {
+  if (!name) return '';
+  const m = name.match(/^(.*?)(\d+)$/);
+  if (!m) return name + '2';
+  const prefix = m[1];
+  const numStr = m[2];
+  const next = parseInt(numStr, 10) + 1;
+  return prefix + String(next).padStart(numStr.length, '0');
+}
+
+// getActiveGroup returns the group of the currently selected device, or '' if none.
+function getActiveGroup() {
+  if (!workingConfig || !selectedDeviceKey) return '';
+  const d = workingConfig.devices.find(d => d.key === selectedDeviceKey);
+  return (d && d.group) ? d.group : '';
+}
+
+// cloneDataviewConfig copies all dataview register entries from fromKey to toKey
+// via the /api/dataview endpoint. Failures are silently ignored (best-effort).
+async function cloneDataviewConfig(fromKey, toKey) {
+  try {
+    const res = await fetch('/api/dataview');
+    if (!res.ok) return;
+    const data = await res.json();
+    const srcRegs = (data.registers || {})[fromKey];
+    if (!srcRegs) return;
+    const puts = [];
+    for (const [fcKey, addrs] of Object.entries(srcRegs)) {
+      const fcNum = parseInt(fcKey.replace('fc', ''), 10);
+      if (isNaN(fcNum) || fcNum < 1 || fcNum > 4) continue;
+      for (const [addrKey, entry] of Object.entries(addrs)) {
+        const address = parseInt(addrKey, 10);
+        if (isNaN(address)) continue;
+        puts.push(fetch('/api/dataview', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device:     toKey,
+            fc:         fcNum,
+            address,
+            name:       entry.name       || '',
+            type:       entry.type       || '',
+            word_order: entry.word_order || '',
+          }),
+        }));
+      }
+    }
+    await Promise.all(puts);
+  } catch (e) {
+    // Dataview config is non-critical at device creation time — log for diagnostics.
+    console.warn('cloneDataviewConfig failed:', e);
+  }
+}
+
 document.getElementById('btn-add').addEventListener('click', () => {
   if (!workingConfig) return;
+
+  // Determine the active group from the currently selected device.
+  const activeGroup = getActiveGroup();
+
+  // Find the last device in the active group to use as the clone source.
+  const groupDevices = workingConfig.devices.filter(d => (d.group || '') === activeGroup);
+  const sourceDevice = groupDevices.length > 0 ? groupDevices[groupDevices.length - 1] : null;
+
+  // Generate a unique internal key.
   let n = workingConfig.devices.length + 1;
   let key = `new-device-${n}`;
   while (workingConfig.devices.find(d => d.key === key)) {
     n++;
     key = `new-device-${n}`;
   }
+
   const defaultPort = 502;
   const autoUnitId = nextAvailableUnitId(workingConfig.devices, defaultPort, key);
   if (autoUnitId === null) {
@@ -1325,19 +1392,41 @@ document.getElementById('btn-add').addEventListener('click', () => {
   }
   const defaultStatusUnitId = 100;
   const autoSlot = nextAvailableSlot(workingConfig.devices, defaultStatusUnitId, key);
+
+  // Build suggested name and clone reads when a source device exists.
+  let suggestedName = '';
+  let clonedReads   = [];
+  if (sourceDevice) {
+    const srcName = (sourceDevice.source && sourceDevice.source.device_name)
+      || sourceDevice.display_name
+      || sourceDevice.key;
+    suggestedName = suggestNextName(srcName);
+    // Clone reads (covers poll interval, function code, address, quantity).
+    clonedReads = deepCopy(sourceDevice.reads || []);
+  }
+
   const newDevice = {
     key,
-    display_name: key,
-    source: { endpoint: '127.0.0.1:502', unit_id: 0, timeout_ms: 1000, device_name: '' },
-    reads:  [],
+    display_name: suggestedName || key,
+    source: { endpoint: '127.0.0.1:502', unit_id: 0, timeout_ms: 1000, device_name: suggestedName },
+    reads:  clonedReads,
     target: { port: defaultPort, unit_id: autoUnitId, status_unit_id: defaultStatusUnitId, status_slot: autoSlot, mode: DEFAULT_TARGET_MODE },
   };
+  if (activeGroup) {
+    newDevice.group = activeGroup;
+  }
+
   workingConfig.devices.push(newDevice);
   selectedDeviceKey = key;
   renderDeviceList();
   renderDevice(newDevice);
-  // Open source in edit mode immediately
+  // Open source in edit mode immediately.
   renderSourceEdit(workingConfig.devices[workingConfig.devices.length - 1]);
+
+  // Clone dataview config (word order, parsing, register labels) — best-effort, async.
+  if (sourceDevice) {
+    cloneDataviewConfig(sourceDevice.key, key).catch(e => console.warn('cloneDataviewConfig:', e));
+  }
 });
 
 // ---------- Delete Device ----------
