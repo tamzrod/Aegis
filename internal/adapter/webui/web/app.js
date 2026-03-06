@@ -34,17 +34,20 @@ function getSelectedDeviceIndex() {
 }
 
 // nextAvailableSlot finds the lowest status slot not used by any other device
-// sharing the same status_unit_id. The device identified by excludeKey is excluded
-// from the check so that re-opening its own edit form does not produce a collision.
-function nextAvailableSlot(devices, statusUnitId, excludeKey) {
+// sharing the same (port, status_unit_id). The device identified by excludeKey is
+// excluded from the check so that re-opening its own edit form does not produce a
+// collision. Returns null when all uint16 slots (0–65535) are exhausted.
+function nextAvailableSlot(devices, port, statusUnitId, excludeKey) {
   const used = new Set(
     (devices || [])
-      .filter(d => d.key !== excludeKey && d.target && d.target.status_unit_id === statusUnitId)
+      .filter(d => d.key !== excludeKey && d.target &&
+                   d.target.port === port && d.target.status_unit_id === statusUnitId)
       .map(d => d.target.status_slot)
   );
-  let slot = 0;
-  while (used.has(slot)) slot++;
-  return slot;
+  for (let slot = 0; slot <= 65535; slot++) {
+    if (!used.has(slot)) return slot;
+  }
+  return null;
 }
 
 // nextAvailableUnitId finds the lowest unit_id (1–247) not already used by another
@@ -64,13 +67,14 @@ function nextAvailableUnitId(devices, port, excludeKey) {
 }
 
 // validateStatusSlotConflicts returns an error string if any two devices in the
-// list share the same (status_unit_id, status_slot), or null if there is no conflict.
+// list share the same (port, status_unit_id, status_slot), or null if there is no
+// conflict. This matches the uniqueness constraint enforced by the backend validator.
 function validateStatusSlotConflicts(devices) {
   const seen = new Map();
   for (const d of devices) {
     const tgt = d.target || {};
     if (!tgt.status_unit_id) continue;
-    const k = `${tgt.status_unit_id}:${tgt.status_slot}`;
+    const k = `${tgt.port}:${tgt.status_unit_id}:${tgt.status_slot}`;
     if (seen.has(k)) {
       return 'Status slot already used by another device.';
     }
@@ -340,7 +344,7 @@ function renderTargetEdit(device) {
   const currentPort = tgt.port || 502;
   const sharedSuid = getSharedStatusUnitId(workingConfig.devices, currentPort, device.key);
   const statusUnitIdDefault = sharedSuid || tgt.status_unit_id || 100;
-  const autoSlot = nextAvailableSlot(workingConfig.devices, statusUnitIdDefault, device.key);
+  const autoSlot = nextAvailableSlot(workingConfig.devices, currentPort, statusUnitIdDefault, device.key);
   const numFields = [
     { label: 'Port',           key: 'port',           value: currentPort },
     { label: 'Unit ID',        key: 'unit_id',        value: tgt.unit_id        ?? 0 },
@@ -393,32 +397,43 @@ function renderTargetEdit(device) {
 
   applyStatusUnitIdLock(currentPort);
 
-  function updateSlotHint(statusUnitId) {
+  function updateSlotHint(port, statusUnitId) {
     if (!slotHintEl) return;
     const used = (workingConfig.devices || [])
-      .filter(d => d.key !== device.key && d.target && d.target.status_unit_id === statusUnitId)
+      .filter(d => d.key !== device.key && d.target &&
+                   d.target.port === port && d.target.status_unit_id === statusUnitId)
       .map(d => d.target.status_slot)
       .sort((a, b) => a - b);
-    slotHintEl.textContent = used.length > 0 ? ' Used: ' + used.join(', ') : '';
+    const available = nextAvailableSlot(workingConfig.devices, port, statusUnitId, device.key);
+    if (available === null) {
+      slotHintEl.textContent = ' No available status slots for this port and status_unit_id.';
+    } else {
+      slotHintEl.textContent = used.length > 0 ? ' Used: ' + used.join(', ') : '';
+    }
   }
 
-  updateSlotHint(statusUnitIdDefault);
+  updateSlotHint(currentPort, statusUnitIdDefault);
 
   // When the port changes, re-evaluate the shared status_unit_id lock.
   inputs['port'].addEventListener('input', () => {
     const port = parseInt(inputs['port'].value, 10) || 0;
     applyStatusUnitIdLock(port);
     const uid = parseInt(inputs['status_unit_id'].value, 10) || 0;
-    const next = nextAvailableSlot(workingConfig.devices, uid, device.key);
-    inputs['status_slot'].value = next;
-    updateSlotHint(uid);
+    const next = nextAvailableSlot(workingConfig.devices, port, uid, device.key);
+    if (next !== null) {
+      inputs['status_slot'].value = next;
+    }
+    updateSlotHint(port, uid);
   });
 
   inputs['status_unit_id'].addEventListener('input', () => {
+    const port = parseInt(inputs['port'].value, 10) || 0;
     const uid = parseInt(inputs['status_unit_id'].value, 10) || 0;
-    const next = nextAvailableSlot(workingConfig.devices, uid, device.key);
-    inputs['status_slot'].value = next;
-    updateSlotHint(uid);
+    const next = nextAvailableSlot(workingConfig.devices, port, uid, device.key);
+    if (next !== null) {
+      inputs['status_slot'].value = next;
+    }
+    updateSlotHint(port, uid);
   });
 
   // Mode dropdown
@@ -1309,14 +1324,81 @@ document.getElementById('btn-restart-runtime').addEventListener('click', async (
 
 // ---------- Add Device ----------
 
+// suggestNextName returns the name with its trailing numeric suffix incremented by 1,
+// preserving zero-padding width (e.g. "SCB01" → "SCB02", "Device9" → "Device10").
+// If there is no numeric suffix, "2" is appended (e.g. "SCB" → "SCB2").
+function suggestNextName(name) {
+  if (!name) return '';
+  const m = name.match(/^(.*?)(\d+)$/);
+  if (!m) return name + '2';
+  const prefix = m[1];
+  const numStr = m[2];
+  const next = parseInt(numStr, 10) + 1;
+  return prefix + String(next).padStart(numStr.length, '0');
+}
+
+// getActiveGroup returns the group of the currently selected device, or '' if none.
+function getActiveGroup() {
+  if (!workingConfig || !selectedDeviceKey) return '';
+  const d = workingConfig.devices.find(d => d.key === selectedDeviceKey);
+  return (d && d.group) ? d.group : '';
+}
+
+// cloneDataviewConfig copies all dataview register entries from fromKey to toKey
+// via the /api/dataview endpoint. Failures are silently ignored (best-effort).
+async function cloneDataviewConfig(fromKey, toKey) {
+  try {
+    const res = await fetch('/api/dataview');
+    if (!res.ok) return;
+    const data = await res.json();
+    const srcRegs = (data.registers || {})[fromKey];
+    if (!srcRegs) return;
+    const puts = [];
+    for (const [fcKey, addrs] of Object.entries(srcRegs)) {
+      const fcNum = parseInt(fcKey.replace('fc', ''), 10);
+      if (isNaN(fcNum) || fcNum < 1 || fcNum > 4) continue;
+      for (const [addrKey, entry] of Object.entries(addrs)) {
+        const address = parseInt(addrKey, 10);
+        if (isNaN(address)) continue;
+        puts.push(fetch('/api/dataview', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device:     toKey,
+            fc:         fcNum,
+            address,
+            name:       entry.name       || '',
+            type:       entry.type       || '',
+            word_order: entry.word_order || '',
+          }),
+        }));
+      }
+    }
+    await Promise.all(puts);
+  } catch (e) {
+    // Dataview config is non-critical at device creation time — log for diagnostics.
+    console.warn('cloneDataviewConfig failed:', e);
+  }
+}
+
 document.getElementById('btn-add').addEventListener('click', () => {
   if (!workingConfig) return;
+
+  // Determine the active group from the currently selected device.
+  const activeGroup = getActiveGroup();
+
+  // Find the last device in the active group to use as the clone source.
+  const groupDevices = workingConfig.devices.filter(d => (d.group || '') === activeGroup);
+  const sourceDevice = groupDevices.length > 0 ? groupDevices[groupDevices.length - 1] : null;
+
+  // Generate a unique internal key.
   let n = workingConfig.devices.length + 1;
   let key = `new-device-${n}`;
   while (workingConfig.devices.find(d => d.key === key)) {
     n++;
     key = `new-device-${n}`;
   }
+
   const defaultPort = 502;
   const autoUnitId = nextAvailableUnitId(workingConfig.devices, defaultPort, key);
   if (autoUnitId === null) {
@@ -1324,20 +1406,46 @@ document.getElementById('btn-add').addEventListener('click', () => {
     return;
   }
   const defaultStatusUnitId = 100;
-  const autoSlot = nextAvailableSlot(workingConfig.devices, defaultStatusUnitId, key);
+  const autoSlot = nextAvailableSlot(workingConfig.devices, defaultPort, defaultStatusUnitId, key);
+  if (autoSlot === null) {
+    showToast('No available status slots for this port and status_unit_id.');
+    return;
+  }
+
+  // Build suggested name and clone reads when a source device exists.
+  let suggestedName = '';
+  let clonedReads   = [];
+  if (sourceDevice) {
+    const srcName = (sourceDevice.source && sourceDevice.source.device_name)
+      || sourceDevice.display_name
+      || sourceDevice.key;
+    suggestedName = suggestNextName(srcName);
+    // Clone reads (covers poll interval, function code, address, quantity).
+    clonedReads = deepCopy(sourceDevice.reads || []);
+  }
+
   const newDevice = {
     key,
-    display_name: key,
-    source: { endpoint: '127.0.0.1:502', unit_id: 0, timeout_ms: 1000, device_name: '' },
-    reads:  [],
+    display_name: suggestedName || key,
+    source: { endpoint: '127.0.0.1:502', unit_id: 0, timeout_ms: 1000, device_name: suggestedName },
+    reads:  clonedReads,
     target: { port: defaultPort, unit_id: autoUnitId, status_unit_id: defaultStatusUnitId, status_slot: autoSlot, mode: DEFAULT_TARGET_MODE },
   };
+  if (activeGroup) {
+    newDevice.group = activeGroup;
+  }
+
   workingConfig.devices.push(newDevice);
   selectedDeviceKey = key;
   renderDeviceList();
   renderDevice(newDevice);
-  // Open source in edit mode immediately
+  // Open source in edit mode immediately.
   renderSourceEdit(workingConfig.devices[workingConfig.devices.length - 1]);
+
+  // Clone dataview config (word order, parsing, register labels) — best-effort, async.
+  if (sourceDevice) {
+    cloneDataviewConfig(sourceDevice.key, key).catch(e => console.warn('cloneDataviewConfig:', e));
+  }
 });
 
 // ---------- Delete Device ----------
@@ -1430,4 +1538,68 @@ const _statusPollId = setInterval(async () => {
     }
     window.location.href = '/login';
   });
+}());
+
+// ---------- Sidebar resize ----------
+(function () {
+  const handle   = document.getElementById('sidebar-resize-handle');
+  const panel    = document.getElementById('left-panel');
+  if (!handle || !panel) return;
+
+  const MIN_WIDTH     = 240;
+  const MAX_WIDTH     = 380;
+  const STORAGE_KEY   = 'aegis_sidebar_width';
+
+  // Restore persisted width.
+  const saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
+  if (saved >= MIN_WIDTH && saved <= MAX_WIDTH) {
+    panel.style.width = saved + 'px';
+  }
+
+  let dragging   = false;
+  let startX     = 0;
+  let startWidth = 0;
+  let rafPending = false;
+  let lastClientX = 0;
+
+  function applyWidth() {
+    rafPending = false;
+    if (!dragging) return;
+    const delta    = lastClientX - startX;
+    const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startWidth + delta));
+    panel.style.width = newWidth + 'px';
+  }
+
+  function stopDrag() {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('resizing');
+    document.body.style.cursor     = '';
+    document.body.style.userSelect = '';
+    localStorage.setItem(STORAGE_KEY, String(panel.offsetWidth));
+  }
+
+  handle.addEventListener('mousedown', function (e) {
+    dragging   = true;
+    startX     = e.clientX;
+    startWidth = panel.offsetWidth;
+    handle.classList.add('resizing');
+    document.body.style.cursor     = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function (e) {
+    if (!dragging) return;
+    lastClientX = e.clientX;
+    if (!rafPending) {
+      rafPending = true;
+      requestAnimationFrame(applyWidth);
+    }
+  });
+
+  document.addEventListener('mouseup', stopDrag);
+
+  // Commit the final size when the pointer leaves the browser window.
+  document.addEventListener('mouseleave', stopDrag);
 }());
