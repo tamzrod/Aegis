@@ -110,6 +110,7 @@ func mergeViewIntoConfig(v configView, base *config.Config) {
 		unit.Target.Port = d.Target.Port
 		unit.Target.UnitID = d.Target.UnitID
 		unit.Target.Mode = d.Target.Mode
+		unit.Group = d.Group
 
 		if d.Target.StatusUnitID != 0 {
 			uid := d.Target.StatusUnitID
