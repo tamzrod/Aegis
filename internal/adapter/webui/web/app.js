@@ -1099,36 +1099,45 @@ function makeDeviceLi(d) {
   return li;
 }
 
-// buildGroupStatusSummary returns a <span> showing a compact per-status dot
-// count for the supplied devices.  It is only visible when the group is
-// collapsed (CSS hides it when details[open]).
-function buildGroupStatusSummary(devices) {
-  const counts = {};
-  devices.forEach(d => {
-    const s = (deviceStatuses[d.key] || {}).status || 'offline';
-    counts[s] = (counts[s] || 0) + 1;
-  });
+const MAX_SEGMENTS = 30;
+
+// buildGroupHealthBar returns a document fragment containing a segmented health
+// bar and an online/total count label for the supplied devices.
+// EXACT MODE  (total ≤ MAX_SEGMENTS): one segment per device.
+// PERCENTAGE MODE (total > MAX_SEGMENTS): bar normalised to MAX_SEGMENTS.
+function buildGroupHealthBar(devices) {
+  const total  = devices.length;
+  const online = devices.filter(d => (deviceStatuses[d.key] || {}).status === 'online').length;
+
+  const bar = document.createElement('span');
+  bar.className = 'group-health-bar';
+
+  if (total <= MAX_SEGMENTS) {
+    // EXACT MODE — one segment per device
+    devices.forEach(d => {
+      const seg = document.createElement('span');
+      const isOnline = (deviceStatuses[d.key] || {}).status === 'online';
+      seg.className = 'group-health-segment ' + (isOnline ? 'ghs-on' : 'ghs-off');
+      bar.appendChild(seg);
+    });
+  } else {
+    // PERCENTAGE MODE — normalise to MAX_SEGMENTS
+    const greenCount = Math.round((online / total) * MAX_SEGMENTS);
+    for (let i = 0; i < MAX_SEGMENTS; i++) {
+      const seg = document.createElement('span');
+      seg.className = 'group-health-segment ' + (i < greenCount ? 'ghs-on' : 'ghs-off');
+      bar.appendChild(seg);
+    }
+  }
+
+  const countLabel = document.createElement('span');
+  countLabel.className = 'group-health-count';
+  countLabel.textContent = online + '/' + total;
 
   const wrap = document.createElement('span');
-  wrap.className = 'group-status-summary';
-
-  ['online', 'warning', 'error', 'offline'].forEach(s => {
-    if (!counts[s]) return;
-    const item = document.createElement('span');
-    item.className = 'group-status-item';
-
-    const dot = document.createElement('span');
-    dot.className = 'device-status-dot device-' + s;
-
-    const cnt = document.createElement('span');
-    cnt.className = 'group-status-count';
-    cnt.textContent = counts[s];
-
-    item.appendChild(dot);
-    item.appendChild(cnt);
-    wrap.appendChild(item);
-  });
-
+  wrap.className = 'group-health-wrap';
+  wrap.appendChild(bar);
+  wrap.appendChild(countLabel);
   return wrap;
 }
 
@@ -1186,7 +1195,7 @@ function renderDeviceList() {
     labelSpan.textContent = label;
     summary.appendChild(labelSpan);
 
-    summary.appendChild(buildGroupStatusSummary(devices));
+    summary.appendChild(buildGroupHealthBar(devices));
 
     details.appendChild(summary);
 
