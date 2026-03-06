@@ -168,11 +168,21 @@ Modbus TCP server. Pure transport adapter — no logic, no state beyond the conn
 
 ### `cmd/aegis`
 
-The binary entry point. Contains only boot orchestration — no business logic.
+The binary entry point. Coordinates boot orchestration and hosts the `RuntimeManager`, which wires all subsystems together and exposes a unified interface to the WebUI.
 
 | File | Responsibility |
 |---|---|
-| `main.go` | Boot sequence, goroutine launch, signal handling, shutdown. |
+| `main.go` | Boot sequence, config load, goroutine launch, OS signal handling, shutdown. |
+| `runtime.go` | `RuntimeManager` struct definition, construction (`NewRuntimeManager`), and the internal `rebuild` engine that atomically stops/starts the running components. |
+| `runtime_lifecycle.go` | External lifecycle operations: `StopRuntime`, `StartRuntime`, `Stop` (graceful shutdown), `RuntimeStatus`, `ListenerStatuses`. |
+| `runtime_status.go` | Observability: `DeviceStatuses`, `ReadDeviceStatus`, `ReadViewerRegisters`, and supporting helpers (`healthCodeToString`, `deriveDeviceStatus`, `isDevicePolling`). |
+| `runtime_config.go` | Config management: `ApplyConfig`, `ReloadFromDisk`, `UpdatePasswordHash`, `GetActiveConfigYAML`, and the shared `atomicWriteConfig` helper. |
+| `orchestrator.go` | Per-unit poll-result consumption loop. Drives the `secTicker` and enforces the write-change policy (status written only when snapshot differs). |
+| `health.go` | Per-read-block health state mutation: `updateBlockHealth`. |
+| `snapshot.go` | Pure snapshot transforms: `applyPollResult` and `applyCounters`. Value-in / value-out, no side effects. |
+| `latency.go` | `PollLatencyTracker` — records per-unit last/avg/max poll latency. Passive-only; does not influence control flow. |
+| `views.go` | `runtimeView` and `configView` adapters that satisfy the `view.RuntimeView` and `view.ConfigView` interfaces. |
+| `doc.go` | Package-level godoc: file organisation and dependency direction. |
 
 ---
 
@@ -182,7 +192,9 @@ The binary entry point. Contains only boot orchestration — no business logic.
 cmd/aegis
   ├── internal/config   (Load, Validate, BuildMemStore, Build)
   ├── internal/engine   (Build, Unit, Poller, StoreWriter, PollResult, StatusSnapshot)
-  └── internal/adapter  (NewServer)
+  ├── internal/adapter  (NewServerWithListener, BuildAuthorityRegistry)
+  ├── internal/runtime  (RuntimeManager, RuntimeState, DeviceStatus, ListenerStatus, StatusBlockSnapshot)
+  └── internal/core     (Store, MemoryID, Area constants — for ReadDeviceStatus / ReadViewerRegisters)
 
 internal/config
   └── internal/core     (MemStore, Memory, MemoryID, AreaLayout, etc.)
@@ -194,6 +206,9 @@ internal/engine
 
 internal/adapter
   └── internal/core     (Store, Memory, MemoryID, Area constants)
+
+internal/runtime
+  (no internal dependencies)
 
 internal/core
   (no internal dependencies)
