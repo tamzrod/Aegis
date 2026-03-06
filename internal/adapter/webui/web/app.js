@@ -16,6 +16,7 @@ let originalConfig    = null;   // last-applied config (from server)
 let workingConfig     = null;   // working copy (modified locally before apply)
 let selectedDeviceKey = null;   // key of the device currently shown in the right panel
 let deviceStatuses    = {};     // maps device key → status string ("online", "error", "offline", "warning")
+const groupOpenStates = new Map(); // maps group key → open bool (persists across re-renders)
 
 // ---------- helpers ----------
 function deepCopy(obj) {
@@ -1098,6 +1099,63 @@ function makeDeviceLi(d) {
   return li;
 }
 
+const MAX_SEGMENTS = 30;
+
+// buildGroupHealthBar returns a document fragment containing a segmented health
+// bar and an online/total count label for the supplied devices.
+// EXACT MODE  (total ≤ MAX_SEGMENTS): one segment per device.
+// PERCENTAGE MODE (total > MAX_SEGMENTS): bar normalised to MAX_SEGMENTS.
+function buildGroupHealthBar(devices) {
+  const total  = devices.length;
+  const online = devices.filter(d => (deviceStatuses[d.key] || {}).status === 'online').length;
+
+  const bar = document.createElement('span');
+  bar.className = 'group-health-bar';
+
+  if (total <= MAX_SEGMENTS) {
+    // EXACT MODE — one segment per device
+    devices.forEach(d => {
+      const seg = document.createElement('span');
+      const isOnline = (deviceStatuses[d.key] || {}).status === 'online';
+      seg.className = 'group-health-segment ' + (isOnline ? 'ghs-on' : 'ghs-off');
+      bar.appendChild(seg);
+    });
+  } else {
+    // PERCENTAGE MODE — normalise to MAX_SEGMENTS
+    const greenCount = Math.round((online / total) * MAX_SEGMENTS);
+    for (let i = 0; i < MAX_SEGMENTS; i++) {
+      const seg = document.createElement('span');
+      seg.className = 'group-health-segment ' + (i < greenCount ? 'ghs-on' : 'ghs-off');
+      bar.appendChild(seg);
+    }
+  }
+
+  const countLabel = document.createElement('span');
+  countLabel.className = 'group-health-count';
+  countLabel.textContent = online + '/' + total;
+
+  const wrap = document.createElement('span');
+  wrap.className = 'group-health-wrap';
+  wrap.appendChild(bar);
+  wrap.appendChild(countLabel);
+  return wrap;
+}
+
+// autoCollapseGroups collapses device groups from the bottom of the list
+// until the device-list element no longer overflows its container.
+function autoCollapseGroups() {
+  const list = document.getElementById('device-list');
+  if (!list) return;
+
+  const allDetails = Array.from(list.querySelectorAll('li.device-group > details'));
+  for (let i = allDetails.length - 1; i >= 0; i--) {
+    if (list.scrollHeight <= list.clientHeight) break;
+    if (!allDetails[i].open) continue;
+    allDetails[i].open = false;
+    groupOpenStates.set(allDetails[i].dataset.groupKey, false);
+  }
+}
+
 function renderDeviceList() {
   const list = document.getElementById('device-list');
   list.innerHTML = '';
@@ -1122,11 +1180,23 @@ function renderDeviceList() {
     groupLi.className = 'device-group';
 
     const details  = document.createElement('details');
-    details.open   = true;
+    details.dataset.groupKey = gName;
+    // Restore previously saved open state; new groups default to open.
+    details.open = groupOpenStates.has(gName) ? groupOpenStates.get(gName) : true;
+    details.addEventListener('toggle', () => {
+      groupOpenStates.set(details.dataset.groupKey, details.open);
+    });
 
     const summary  = document.createElement('summary');
-    summary.className   = 'device-group-header';
-    summary.textContent = label;
+    summary.className = 'device-group-header';
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'group-label';
+    labelSpan.textContent = label;
+    summary.appendChild(labelSpan);
+
+    summary.appendChild(buildGroupHealthBar(devices));
+
     details.appendChild(summary);
 
     const subUl = document.createElement('ul');
@@ -1137,6 +1207,10 @@ function renderDeviceList() {
     groupLi.appendChild(details);
     list.appendChild(groupLi);
   });
+
+  // After the browser has applied the new layout, collapse bottom groups if
+  // the list overflows the sidebar height.
+  requestAnimationFrame(autoCollapseGroups);
 }
 
 function selectDevice(key) {

@@ -211,6 +211,40 @@ details[open] > .device-group-header::before {
   padding-left: 1.75rem;
 }
 
+/* ---- Group health bar (always visible in group header) ---- */
+
+.group-health-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.group-health-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.group-health-segment {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+}
+
+.ghs-on  { background: #22c55e; }
+.ghs-off { background: #3a3a5c; }
+
+.group-health-count {
+  font-size: 0.7rem;
+  color: #9aabb8;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 .panel-actions {
   display: flex;
   gap: 0.4rem;
