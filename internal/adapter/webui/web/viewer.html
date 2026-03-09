@@ -590,13 +590,14 @@
     'use strict';
 
     // ---- State ----
-    let devices = [];        // [{key, displayName, source, target}]
+    let devices = [];        // [{key, displayName, source, reads, target}]
     let lastValues = [];     // last read register values [{address, value}]
     let expandedRow = null;  // address of currently expanded bit inspector row
     let refreshTimer = null;
     let healthTimer = null;
     let lastReqTotal = null; // {count, ts} for requests/sec computation
     let dataviewConfig = {}; // {device: {fc_key: {addr_key: {name,type,word_order}}}}
+    let userHasEditedFields = false; // true once the user manually edits fc/address/quantity
 
     const DEFAULT_REFRESH_RATE_MS = 1000;
     const MIN_REFRESH_RATE_MS = 100;
@@ -659,6 +660,10 @@
     chkRefresh.addEventListener('change', onAutoRefreshChange);
     inpRefreshRate.addEventListener('change', onRefreshRateChange);
     inpRefreshRate.addEventListener('input', onRefreshRateChange);
+    // Mark fields as user-edited so auto-prefill stops overriding them.
+    selFC.addEventListener('change', () => { userHasEditedFields = true; });
+    inpAddress.addEventListener('input', () => { userHasEditedFields = true; });
+    inpQuantity.addEventListener('input', () => { userHasEditedFields = true; });
 
     // ---- Load device list ----
     function loadDevices() {
@@ -759,12 +764,30 @@
       updateHealthUI(null);
       if (key) {
         startHealthPolling(key, dev);
+        prefillReadDefaults(dev);
       } else {
         stopHealthPolling();
         healthPanel.style.display = 'none';
       }
       // Clear table when device changes.
       clearTable();
+    }
+
+    // ---- Prefill Start Address, Quantity, and Function Code from device config ----
+    // Applies FC3 → FC4 → first-available priority. No-op if user has edited
+    // the fields manually or if the device has no read blocks configured.
+    function prefillReadDefaults(dev) {
+      if (userHasEditedFields) return;
+      if (!dev || !Array.isArray(dev.reads) || dev.reads.length === 0) return;
+
+      const block =
+        dev.reads.find(r => r.fc === 3) ||
+        dev.reads.find(r => r.fc === 4) ||
+        dev.reads[0];
+
+      selFC.value       = String(block.fc);
+      inpAddress.value  = String(block.address);
+      inpQuantity.value = String(block.quantity);
     }
 
     function getRefreshRateMs() {
