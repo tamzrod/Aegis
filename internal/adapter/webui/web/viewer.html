@@ -598,6 +598,7 @@
     let lastReqTotal = null; // {count, ts} for requests/sec computation
     let dataviewConfig = {}; // {device: {fc_key: {addr_key: {name,type,word_order}}}}
     let userHasEditedFields = false; // true once the user manually edits fc/address/quantity
+    let requestInProgress = false;   // true while a read fetch is in-flight
 
     const DEFAULT_REFRESH_RATE_MS = 1000;
     const MIN_REFRESH_RATE_MS = 100;
@@ -681,10 +682,7 @@
           // Auto-select first device if available.
           if (devices.length > 0) {
             selDevice.value = devices[0].key;
-            onDeviceChange();
-            // Automatically perform a single read on page load so the table
-            // is populated immediately (equivalent to pressing the Read button).
-            doRead();
+            onDeviceChange(); // triggers doRead() internally
           }
         })
         .catch(err => {
@@ -771,6 +769,10 @@
       }
       // Clear table when device changes.
       clearTable();
+      // Perform an initial read whenever a device becomes active.
+      if (key) {
+        doRead();
+      }
     }
 
     // ---- Prefill Start Address, Quantity, and Function Code from device config ----
@@ -801,7 +803,10 @@
       if (chkRefresh.checked) {
         dotRefresh.classList.add('active');
         doRead();
-        refreshTimer = setInterval(doRead, getRefreshRateMs());
+        refreshTimer = setInterval(() => {
+          console.debug('Auto refresh tick');
+          doRead();
+        }, getRefreshRateMs());
       } else {
         dotRefresh.classList.remove('active');
         if (refreshTimer !== null) {
@@ -821,7 +826,10 @@
       // Restart timer with new interval if auto-refresh is active.
       if (chkRefresh.checked && refreshTimer !== null) {
         clearInterval(refreshTimer);
-        refreshTimer = setInterval(doRead, getRefreshRateMs());
+        refreshTimer = setInterval(() => {
+          console.debug('Auto refresh tick');
+          doRead();
+        }, getRefreshRateMs());
       }
     }
 
@@ -924,6 +932,9 @@
 
     // ---- Read registers ----
     function doRead() {
+      if (requestInProgress) return;
+      console.debug('DataViewer read triggered');
+
       const device   = selDevice.value;
       const fc       = parseInt(selFC.value, 10);
       const address  = parseInt(inpAddress.value, 10);
@@ -952,6 +963,9 @@
         tableBody.innerHTML = '<div class="viewer-loading">Reading\u2026</div>';
       }
 
+      requestInProgress = true;
+      btnRead.disabled = true;
+
       fetch(url)
         .then(r => {
           if (!r.ok) {
@@ -966,11 +980,16 @@
           renderTable(fc);
           cardMeta.textContent = values.length + ' register' + (values.length !== 1 ? 's' : '')
                                + ' \u00b7 FC' + fc + ' \u00b7 ' + new Date().toLocaleTimeString();
+          console.debug('DataViewer read completed');
         })
         .catch(err => {
           if (!chkRefresh.checked) {
             showError(err.message);
           }
+        })
+        .finally(() => {
+          requestInProgress = false;
+          btnRead.disabled = false;
         });
     }
 
