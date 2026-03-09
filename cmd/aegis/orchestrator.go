@@ -75,9 +75,10 @@ func runOrchestrator(
 			return
 
 		case res := <-ch:
-			// Record poll latency: duration from tick time to result receipt.
-			// This is a passive observation; it does not influence control flow.
-			if tracker != nil && !res.At.IsZero() {
+			// Record poll latency only for ticks where actual Modbus reads were
+			// attempted (non-empty ticks).  Empty ticks produce near-zero latency
+			// and would skew the running average without representing real I/O.
+			if tracker != nil && !res.At.IsZero() && (res.Err != nil || len(res.BlockUpdates) > 0) {
 				ms := uint32(time.Since(res.At).Milliseconds())
 				tracker.Record(unitID, ms)
 			}

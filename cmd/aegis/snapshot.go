@@ -12,7 +12,17 @@ import (
 // applyPollResult derives health and error fields from res and writes them
 // into a copy of snap.
 // Returns the updated snapshot and whether any field changed.
+//
+// Empty-tick guard: when no blocks were due (BlockUpdates is empty) and no
+// error occurred, the poller performed no Modbus exchange.  In that case the
+// health state must not change — treating silence as success would incorrectly
+// clear an active error during a transient scheduling gap.
 func applyPollResult(snap engine.StatusSnapshot, res engine.PollResult) (engine.StatusSnapshot, bool) {
+	// Empty tick: no blocks were executed — do not alter health state.
+	if res.Err == nil && len(res.BlockUpdates) == 0 {
+		return snap, false
+	}
+
 	changed := false
 
 	if res.Err == nil {
