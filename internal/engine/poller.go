@@ -96,8 +96,6 @@ func (p *Poller) PollOnce() PollResult {
 // Using an explicit time allows the Run loop to use the ticker's channel time,
 // which avoids drift accumulation.
 func (p *Poller) pollAt(now time.Time) PollResult {
-	p.counters.RequestsTotal++
-
 	res := PollResult{
 		UnitID: p.cfg.UnitID,
 		At:     now,
@@ -113,9 +111,12 @@ func (p *Poller) pollAt(now time.Time) PollResult {
 
 	if len(due) == 0 {
 		// No reads are scheduled for this tick.
-		p.recordSuccess()
+		// Do NOT update any transport counters: no Modbus exchange took place.
 		return res
 	}
+
+	// Count the poll attempt only when actual Modbus reads will be performed.
+	p.counters.RequestsTotal++
 
 	// Lazy connect: only attempt when there is work to do.
 	if p.client == nil {
