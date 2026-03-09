@@ -2,7 +2,7 @@
 
 **Audit scope:** MMA2, Modbus Replicator, Aegis  
 **Date:** 2026-03-09  
-**Status:** Complete — corrections applied
+**Status:** Complete — corrections applied (D-1 through D-3, D-8)
 
 ---
 
@@ -85,7 +85,7 @@ No differences.
 | Due-block filter | None — all reads always execute | `nextExec[i]` checked against current time; only due blocks execute |
 | Empty tick | Impossible — every tick executes all reads | Possible when all blocks have `nextExec > now` |
 | Abort-on-first-failure | Yes — first failing block aborts the cycle | Yes — same behavior |
-| nextExec advancement | N/A | Only advanced when ALL due blocks in a cycle succeed |
+| nextExec advancement | N/A | Advanced for all due blocks **before** any I/O, regardless of success/failure |
 | Goroutine structure | One goroutine per unit; ticker drives `PollOnce()` | Same — one goroutine per unit; ticker drives `pollAt(t)` |
 | Poll-overlap protection | Blocking channel send (`out <- res`) ensures orchestrator must drain before next tick | Identical |
 
@@ -382,6 +382,83 @@ writes are simpler and carry no correctness risk.
 
 ---
 
+### D-8 — CRITICAL: nextExec not advanced on failure — tight retry loop in multi-interval configs
+
+**Location:** `internal/engine/poller.go` — `pollAt()` function  
+**Classification:** CRITICAL
+
+**Description:**  
+Before this fix, `pollAt()` only advanced `nextExec[i]` when **all** due blocks
+succeeded.  On any failure (read error, factory error, or unsupported FC), all
+due blocks' `nextExec` values were left unchanged — meaning every due block
+remained immediately due again on the very next ticker tick.
+
+Because the ticker fires at `minInterval()` (the smallest interval across all
+configured read blocks), a block whose own interval is much larger than
+`minInterval` would be retried at `minInterval` rate rather than at its
+configured rate:
+
+```
+Example:
+  Block A — FC 3, interval 100 ms  (fast sensor data)
+  Block B — FC 3, interval 60 s    (slow status register)
+
+  minInterval = 100 ms
+
+  Scenario: Block B (60 s) fails.
+
+  BEFORE fix:
+    nextExec[B] is NOT advanced.
+    On every subsequent 100 ms tick, Block B is still due.
+    Block B is retried 10 times/second instead of once/minute.
+    → 600× more aggressive than configured.
+    → Weak device is hammered continuously during an error condition.
+
+  AFTER fix:
+    nextExec[B] is advanced to now + 60 s before any I/O.
+    Block B is retried only after its full configured interval.
+    → Device load unchanged from the pre-failure steady state.
+```
+
+The same pattern applied to factory failures: if the device is unreachable and
+a new TCP connection cannot be established, Aegis would attempt to reconnect on
+every `minInterval` tick rather than waiting for the block's own cadence.
+
+The Replicator is immune to this class of bug because it has a single global
+interval per unit — every block has the same cadence, so `minInterval` equals
+the (only) block interval.  There is no faster ticker that can trigger early
+retries.
+
+**Fix applied:**
+
+```go
+// BEFORE (incorrect — nextExec advanced only on full success):
+for _, idx := range due {
+    // ... execute block
+    if err != nil {
+        return res  // nextExec unchanged → block immediately due on next tick
+    }
+}
+// Only reached if all blocks succeeded:
+for _, idx := range due {
+    p.nextExec[idx] = now.Add(p.cfg.Reads[idx].Interval)
+}
+
+// AFTER (correct — nextExec advanced before any I/O):
+// Advance next-execution times for all due blocks before attempting any I/O.
+for _, idx := range due {
+    p.nextExec[idx] = now.Add(p.cfg.Reads[idx].Interval)
+}
+// ... execute blocks; failure paths now return with nextExec already advanced
+```
+
+**Files changed:** `internal/engine/poller.go`  
+**Tests added:** `internal/engine/poller_test.go`
+- `TestPollAtFailureAdvancesNextExec` — verifies that on read failure, all due blocks' `nextExec` is advanced to `now + interval`
+- `TestPollAtFactoryFailureAdvancesNextExec` — verifies that on factory/connect failure, due blocks' `nextExec` is advanced
+
+---
+
 ## 7. Risk Assessment
 
 | ID | Classification | Impact |
@@ -393,6 +470,7 @@ writes are simpler and carry no correctness risk.
 | D-5 | SAFE | Per-block interval scheduling — Aegis architectural extension. |
 | D-6 | SAFE | In-process write path — eliminates Raw Ingest network hop. |
 | D-7 | SAFE | Full-block status writes vs. Replicator differential writes. |
+| D-8 | **CRITICAL** | Failing blocks not advancing `nextExec` — retried at `minInterval` rate in multi-interval configs, potentially hundreds of times faster than configured. Causes continuous device hammering during error conditions. **Fixed.** |
 
 ---
 
@@ -405,7 +483,8 @@ writes are simpler and carry no correctness risk.
 | Fix D-1 | `internal/engine/poller.go` | Move `RequestsTotal++` after the `due` check; remove `recordSuccess()` on empty ticks |
 | Fix D-2 | `cmd/aegis/snapshot.go` | Guard `applyPollResult` against empty-tick results; use `len(res.BlockUpdates) == 0 && res.Err == nil` to detect empty ticks |
 | Fix D-3 | `cmd/aegis/orchestrator.go` | Skip latency recording for empty-tick results |
-| Tests | `internal/engine/poller_test.go` | Validate counter invariants for empty, success, and failure ticks |
+| Fix D-8 | `internal/engine/poller.go` | Advance `nextExec` for all due blocks before I/O so failed blocks wait their configured interval before retry |
+| Tests | `internal/engine/poller_test.go` | Validate counter invariants for empty, success, and failure ticks; validate `nextExec` advancement on failure and factory failure |
 | Tests | `cmd/aegis/snapshot_test.go` | Validate health-state transitions for all tick types |
 
 ### Client guidance (not a code change)
@@ -432,10 +511,17 @@ two layouts are not interchangeable.
 | Status block determinism | Fixed 30-register layout, always written | Identical (different slot offsets by design) |
 | Poll-overlap prevention | Blocking channel send | Identical |
 
-The **single pattern violated by Aegis** (before the fixes in this audit) was
-counter-as-data determinism: counters were incremented on empty ticks that
-carried no real Modbus exchange, producing values inconsistent with the
-Replicator's definition of "one increment = one device interaction."
+The **patterns violated by Aegis** (before the fixes in this audit) were:
+
+1. **Counter-as-data determinism** (D-1, D-2, D-3): counters were incremented
+   and health state updated on empty ticks that carried no real Modbus exchange,
+   producing values inconsistent with the Replicator's definition of "one
+   increment = one device interaction."
+
+2. **Failure pacing** (D-8): failing blocks in multi-interval configurations were
+   not advancing `nextExec`, causing them to be retried at `minInterval` rate
+   instead of their own configured cadence.  The Replicator is immune to this
+   because it uses a single global interval per unit.
 
 ---
 

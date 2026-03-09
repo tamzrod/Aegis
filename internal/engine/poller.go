@@ -81,8 +81,9 @@ func NewPoller(cfg PollerConfig, client Client, factory func() (Client, error)) 
 // If no blocks are due, it returns a successful result with an empty Blocks slice.
 //
 // All-or-nothing within the due set: any failure aborts the remaining due reads
-// and returns a PollResult with Err set.  nextExec is only advanced for reads
-// that are executed in a fully-successful cycle.
+// and returns a PollResult with Err set.  nextExec is advanced for all due blocks
+// before any I/O is attempted so that each block always waits its full configured
+// interval before the next attempt, whether the cycle succeeds or fails.
 //
 // Connection policy:
 //   - Reuse existing client while healthy.
@@ -113,6 +114,20 @@ func (p *Poller) pollAt(now time.Time) PollResult {
 		// No reads are scheduled for this tick.
 		// Do NOT update any transport counters: no Modbus exchange took place.
 		return res
+	}
+
+	// Advance next-execution times for all due blocks before attempting any I/O.
+	// This guarantees each block waits its full configured interval before the
+	// next attempt, regardless of whether the read succeeds or fails.
+	//
+	// Without this, a failing block in a multi-block unit would have its
+	// nextExec left at a past time, making it immediately due again on every
+	// subsequent ticker tick (which fires at minInterval — the fastest block's
+	// cadence).  A 60-second block paired with a 100 ms block would then be
+	// retried 10 times per second instead of once per minute, hammering a weak
+	// device during an error condition.
+	for _, idx := range due {
+		p.nextExec[idx] = now.Add(p.cfg.Reads[idx].Interval)
 	}
 
 	// Count the poll attempt only when actual Modbus reads will be performed.
@@ -206,11 +221,6 @@ func (p *Poller) pollAt(now time.Time) PollResult {
 			res.BlockUpdates = updates
 			return res
 		}
-	}
-
-	// All due reads succeeded: advance their next-execution times.
-	for _, idx := range due {
-		p.nextExec[idx] = now.Add(p.cfg.Reads[idx].Interval)
 	}
 
 	res.Blocks = blocks
