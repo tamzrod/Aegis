@@ -277,6 +277,82 @@ func TestPollAtMultiBlockAllDue(t *testing.T) {
 	}
 }
 
+// TestPollAtFailureAdvancesNextExec verifies that when a read block fails, its
+// nextExec is still advanced by the configured interval.
+//
+// This prevents a tight retry loop in multi-block configurations where the
+// ticker fires at minInterval (the fastest block's cadence): without this
+// guarantee, a slower block's failure would cause it to be retried on every
+// tick at minInterval rate instead of at its own configured interval.
+func TestPollAtFailureAdvancesNextExec(t *testing.T) {
+	reads := []ReadBlock{
+		{FC: 3, Address: 0, Quantity: 1, Interval: 100 * time.Millisecond}, // block 0 — fast
+		{FC: 3, Address: 1, Quantity: 1, Interval: 60 * time.Second},       // block 1 — slow; will fail
+	}
+	p, err := NewPoller(
+		PollerConfig{UnitID: "u1", Reads: reads},
+		&fakeClient{failFC: 3}, // all FC 3 reads fail
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewPoller: %v", err)
+	}
+
+	now := time.Now()
+	res := p.pollAt(now)
+
+	if res.Err == nil {
+		t.Fatal("expected failure, got success")
+	}
+
+	// Block 0 (fast) is in the due set — its nextExec must be advanced.
+	wantFast := now.Add(100 * time.Millisecond)
+	if p.nextExec[0].Before(wantFast) || p.nextExec[0].After(wantFast) {
+		t.Errorf("nextExec[0]: want %v, got %v", wantFast, p.nextExec[0])
+	}
+
+	// Block 1 (slow) is also in the due set — its nextExec must be advanced to
+	// now+60s, not left at the zero time that would cause it to be retried on
+	// every subsequent minInterval tick.
+	wantSlow := now.Add(60 * time.Second)
+	if p.nextExec[1].Before(wantSlow) || p.nextExec[1].After(wantSlow) {
+		t.Errorf("nextExec[1]: want %v, got %v", wantSlow, p.nextExec[1])
+	}
+}
+
+// TestPollAtFactoryFailureAdvancesNextExec verifies that when the factory cannot
+// create a client, the due blocks' nextExec is still advanced.
+//
+// Without this, a device that is unreachable would trigger a new TCP connection
+// attempt on every ticker tick (minInterval), which could be far more frequent
+// than the block's own configured poll interval.
+func TestPollAtFactoryFailureAdvancesNextExec(t *testing.T) {
+	reads := []ReadBlock{
+		{FC: 3, Address: 0, Quantity: 1, Interval: 5 * time.Second},
+	}
+	p, err := NewPoller(
+		PollerConfig{UnitID: "u1", Reads: reads},
+		nil, // no initial client
+		func() (Client, error) { return nil, errors.New("connection refused") },
+	)
+	if err != nil {
+		t.Fatalf("NewPoller: %v", err)
+	}
+
+	now := time.Now()
+	res := p.pollAt(now)
+
+	if res.Err == nil {
+		t.Fatal("expected factory failure, got success")
+	}
+
+	// nextExec must be advanced even though the factory failed.
+	want := now.Add(5 * time.Second)
+	if p.nextExec[0].Before(want) || p.nextExec[0].After(want) {
+		t.Errorf("nextExec[0] after factory failure: want %v, got %v", want, p.nextExec[0])
+	}
+}
+
 // TestPollAtEmptyTickPreservesErrorState verifies the critical safety property:
 // an empty tick must not reset health-relevant counter state (ConsecutiveFailCurr)
 // that was set by a prior real failure.
