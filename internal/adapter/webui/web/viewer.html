@@ -288,10 +288,12 @@
 
     /* Merged ASCII type + count control */
     .type-group {
-      display: inline-flex;
+      display: flex;
+      width: 100%;
     }
 
     .type-group .type-select {
+      flex: 1;
       border-top-right-radius: 0;
       border-bottom-right-radius: 0;
       border-right: 0;
@@ -1576,11 +1578,11 @@
             });
             rows += '</select></div></td>';
           } else {
-            rows += '<td class="col-type"><select class="row-select type-sel" data-addr="' + address + '">';
+            rows += '<td class="col-type"><div class="type-group"><select class="row-select type-sel type-select" data-addr="' + address + '">';
             DATA_TYPES.forEach(t => {
               rows += '<option value="' + t.value + '"' + (t.value === type ? ' selected' : '') + '>' + t.label + '</option>';
             });
-            rows += '</select></td>';
+            rows += '</select></div></td>';
           }
 
           // Word Order cell: disabled with "—" when ASCII, otherwise normal.
