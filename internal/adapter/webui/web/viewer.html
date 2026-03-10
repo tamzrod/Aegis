@@ -1549,9 +1549,9 @@
         const is32 = typeIs32(type);
         const is64 = typeIs64(type);
         let hexStr = getCombinedHex(address, type, wo);
-        let binStr = getCombinedBinary(address, type, wo);
         if (!hexStr) hexStr = rawHex;
-        if (!binStr) binStr = rawBin;
+        // Binary always reflects the raw 16-bit register value, regardless of datatype.
+        const binStr = rawBin;
 
         rows += '<tr class="' + rowCls + '" data-address="' + address + '">';
         rows += '<td class="col-address">' + address + '</td>';
