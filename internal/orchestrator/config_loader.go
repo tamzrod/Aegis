@@ -1,7 +1,8 @@
-// cmd/aegis/views.go — RuntimeView and ConfigView implementations for the WebUI adapter.
+// internal/orchestrator/config_loader.go
+// Startup-captured view types for the WebUI adapter.
 // These types satisfy the view.RuntimeView and view.ConfigView interfaces using
 // data captured at startup. They are read-only and safe for concurrent use.
-package main
+package orchestrator
 
 import "time"
 

@@ -1,5 +1,5 @@
-// internal/adapter/authority_test.go
-package adapter
+// internal/memory/authority_test.go
+package memory
 
 import (
 	"encoding/binary"
@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/tamzrod/Aegis/internal/config"
-	"github.com/tamzrod/Aegis/internal/core"
+	
 )
 
 // --------------------
@@ -448,16 +448,16 @@ func (c *fakeConn) LocalAddr() net.Addr { return c.localAddr }
 
 // buildTestStore creates a minimal store with one memory block: port=502, unitID=1,
 // with 10 holding registers starting at address 0.
-func buildTestStore(t *testing.T) core.Store {
+func buildTestStore(t *testing.T) Store {
 	t.Helper()
-	store := core.NewMemStore()
-	mem, err := core.NewMemory(core.MemoryLayouts{
-		HoldingRegs: &core.AreaLayout{Start: 0, Size: 10},
+	store := NewMemStore()
+	mem, err := NewMemory(MemoryLayouts{
+		HoldingRegs: &AreaLayout{Start: 0, Size: 10},
 	})
 	if err != nil {
 		t.Fatalf("NewMemory: %v", err)
 	}
-	if err := store.Add(core.MemoryID{Port: 502, UnitID: 1}, mem); err != nil {
+	if err := store.Add(MemoryID{Port: 502, UnitID: 1}, mem); err != nil {
 		t.Fatalf("store.Add: %v", err)
 	}
 	return store
@@ -495,7 +495,7 @@ func buildFC6Frame() []byte {
 
 // sendAndReceive sends a Modbus TCP frame via the client end of a pipe and reads
 // one response frame back.  The server goroutine runs HandleConn.
-func sendAndReceive(t *testing.T, authority *AuthorityRegistry, store core.Store, reqFrame []byte) []byte {
+func sendAndReceive(t *testing.T, authority *AuthorityRegistry, store Store, reqFrame []byte) []byte {
 	t.Helper()
 
 	srvRaw, cli := net.Pipe()
@@ -674,10 +674,10 @@ func TestBuildAuthorityRegistryMultiUnitKeys(t *testing.T) {
 // data from their independent memory surfaces without cross-contamination.
 func TestMultiUnitRoutingSharedPort(t *testing.T) {
 	// Build a store with two independent memory surfaces.
-	store := core.NewMemStore()
+	store := NewMemStore()
 	for _, unitID := range []uint16{1, 2} {
-		mem, err := core.NewMemory(core.MemoryLayouts{
-			HoldingRegs: &core.AreaLayout{Start: 0, Size: 10},
+		mem, err := NewMemory(MemoryLayouts{
+			HoldingRegs: &AreaLayout{Start: 0, Size: 10},
 		})
 		if err != nil {
 			t.Fatalf("NewMemory unit_id=%d: %v", unitID, err)
@@ -686,10 +686,10 @@ func TestMultiUnitRoutingSharedPort(t *testing.T) {
 		sentinel := make([]byte, 2)
 		sentinel[0] = 0
 		sentinel[1] = byte(unitID * 10) // unit 1 → 10, unit 2 → 20
-		if err := mem.WriteRegs(core.AreaHoldingRegs, 0, 1, sentinel); err != nil {
+		if err := mem.WriteRegs(AreaHoldingRegs, 0, 1, sentinel); err != nil {
 			t.Fatalf("WriteRegs unit_id=%d: %v", unitID, err)
 		}
-		if err := store.Add(core.MemoryID{Port: 11502, UnitID: unitID}, mem); err != nil {
+		if err := store.Add(MemoryID{Port: 11502, UnitID: unitID}, mem); err != nil {
 			t.Fatalf("store.Add unit_id=%d: %v", unitID, err)
 		}
 	}
@@ -766,15 +766,15 @@ func TestMultiUnitRoutingSharedPort(t *testing.T) {
 // surfaces exist for each unit ID and that the full 10-register range is covered.
 func TestDebugIllegalDataAddressMultiUnit(t *testing.T) {
 	// Build independent memory surfaces: 10 holding registers [0-9] for each unit.
-	store := core.NewMemStore()
+	store := NewMemStore()
 	for _, uid := range []uint16{1, 2} {
-		mem, err := core.NewMemory(core.MemoryLayouts{
-			HoldingRegs: &core.AreaLayout{Start: 0, Size: 10},
+		mem, err := NewMemory(MemoryLayouts{
+			HoldingRegs: &AreaLayout{Start: 0, Size: 10},
 		})
 		if err != nil {
 			t.Fatalf("NewMemory unit_id=%d: %v", uid, err)
 		}
-		if err := store.Add(core.MemoryID{Port: 11502, UnitID: uid}, mem); err != nil {
+		if err := store.Add(MemoryID{Port: 11502, UnitID: uid}, mem); err != nil {
 			t.Fatalf("store.Add unit_id=%d: %v", uid, err)
 		}
 	}
@@ -936,7 +936,7 @@ func TestReproMultiUnitFanout(t *testing.T) {
 
 	// Step 2: Assert both data memory surfaces were created.
 	for _, uid := range []uint16{1, 2} {
-		id := core.MemoryID{Port: 11502, UnitID: uid}
+		id := MemoryID{Port: 11502, UnitID: uid}
 		if _, ok := store.Get(id); !ok {
 			t.Errorf("memory surface (port=11502 unit=%d) not found in store", uid)
 		}
