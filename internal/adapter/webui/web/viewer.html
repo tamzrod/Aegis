@@ -199,6 +199,7 @@
       border-collapse: collapse;
       width: 100%;
       font-size: 0.875rem;
+      table-layout: fixed;
     }
 
     .reg-table thead {
@@ -245,12 +246,14 @@
       white-space: nowrap;
     }
 
-    /* Name column — fixed width ~200px */
-    .reg-table td.col-name {
-      width: 200px;
-      min-width: 200px;
-      max-width: 200px;
-    }
+    /* Column widths (applied to both th and td via table-layout: fixed) */
+    .reg-table th.col-address, .reg-table td.col-address { width: 60px; }
+    .reg-table th.col-name,    .reg-table td.col-name    { width: 220px; }
+    .reg-table th.col-type,    .reg-table td.col-type    { width: 160px; }
+    .reg-table th.col-wordorder, .reg-table td.col-wordorder { width: 100px; }
+    .reg-table th.col-decimal, .reg-table td.col-decimal { width: 100px; }
+    .reg-table th.col-hex,     .reg-table td.col-hex     { width: 120px; }
+    .reg-table th.col-binary,  .reg-table td.col-binary  { width: 180px; }
 
     /* Name cell display text */
     .name-text {
@@ -281,7 +284,10 @@
       box-sizing: border-box;
     }
 
-    .reg-table td.col-type,
+    .reg-table td.col-type {
+      overflow: hidden;
+    }
+
     .reg-table td.col-wordorder {
       white-space: nowrap;
     }
@@ -289,6 +295,7 @@
     /* Merged ASCII type + count control */
     .type-group {
       display: flex;
+      gap: 4px;
       width: 100%;
     }
 
@@ -300,7 +307,7 @@
     }
 
     .type-group .ascii-count {
-      width: 60px;
+      width: 48px;
       border-top-left-radius: 0;
       border-bottom-left-radius: 0;
     }
@@ -1479,13 +1486,13 @@
       const colspanBI = isBit ? 3 : 8;
 
       let thead = '<thead><tr>'
-        + '<th>Address</th>'
-        + '<th>Name</th>';
+        + '<th class="col-address">Address</th>'
+        + '<th class="col-name">Name</th>';
       if (!isBit) {
-        thead += '<th>Type</th><th>Word&nbsp;Order</th><th>Parsed</th>';
+        thead += '<th class="col-type">Type</th><th class="col-wordorder">Word&nbsp;Order</th><th class="col-parsed">Parsed</th>';
       }
-      thead += '<th>Decimal</th>';
-      if (!isBit) thead += '<th>Hex</th><th>Binary</th>';
+      thead += '<th class="col-decimal">Decimal</th>';
+      if (!isBit) thead += '<th class="col-hex">Hex</th><th class="col-binary">Binary</th>';
       thead += '</tr></thead>';
 
       let rows = '';
