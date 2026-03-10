@@ -286,6 +286,23 @@
       white-space: nowrap;
     }
 
+    /* Merged ASCII type + count control */
+    .type-group {
+      display: inline-flex;
+    }
+
+    .type-group .type-select {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+      border-right: 0;
+    }
+
+    .type-group .ascii-count {
+      width: 60px;
+      border-top-left-radius: 0;
+      border-bottom-left-radius: 0;
+    }
+
     /* Per-row type / word-order dropdowns */
     .row-select {
       background: #1a1a3a;
@@ -703,8 +720,8 @@
       { value: 'ascii-z',      label: 'ASCII-Z'      },
     ];
 
-    // Allowed register counts for ASCII type.
-    const ASCII_COUNT_OPTIONS = [1, 2, 4];
+    // Allowed register counts for ASCII type (1–16 registers).
+    const ASCII_COUNT_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
     // Word order options per width category.
     const WORD_ORDERS_32 = [
@@ -1545,20 +1562,32 @@
               + '</span></td>';
 
         if (!isBit) {
-          // Type dropdown.
-          rows += '<td class="col-type"><select class="row-select type-sel" data-addr="' + address + '">';
-          DATA_TYPES.forEach(t => {
-            rows += '<option value="' + t.value + '"' + (t.value === type ? ' selected' : '') + '>' + t.label + '</option>';
-          });
-          rows += '</select></td>';
-
-          // Second column: COUNT dropdown for ASCII, Word Order for 32/64-bit, disabled otherwise.
+          // Type cell: for ASCII, render a merged [type▼|count▼] group.
           if (type === 'ascii') {
-            rows += '<td class="col-wordorder"><select class="row-select count-sel" data-addr="' + address + '">';
+            rows += '<td class="col-type"><div class="type-group">'
+                 + '<select class="row-select type-sel type-select" data-addr="' + address + '">';
+            DATA_TYPES.forEach(t => {
+              rows += '<option value="' + t.value + '"' + (t.value === type ? ' selected' : '') + '>' + t.label + '</option>';
+            });
+            rows += '</select>'
+                 + '<select class="row-select count-sel ascii-count" data-addr="' + address + '">';
             ASCII_COUNT_OPTIONS.forEach(n => {
               rows += '<option value="' + n + '"' + (n === asciiCnt ? ' selected' : '') + '>' + n + '</option>';
             });
+            rows += '</select></div></td>';
+          } else {
+            rows += '<td class="col-type"><select class="row-select type-sel" data-addr="' + address + '">';
+            DATA_TYPES.forEach(t => {
+              rows += '<option value="' + t.value + '"' + (t.value === type ? ' selected' : '') + '>' + t.label + '</option>';
+            });
             rows += '</select></td>';
+          }
+
+          // Word Order cell: disabled with "—" when ASCII, otherwise normal.
+          if (type === 'ascii') {
+            rows += '<td class="col-wordorder"><select class="row-select wo-sel" data-addr="' + address + '" disabled>'
+                 + '<option value="">\u2014</option>'
+                 + '</select></td>';
           } else {
             const woEnabled = (is32 || is64) && !typeIsAscii(type);
             rows += '<td class="col-wordorder"><select class="row-select wo-sel" data-addr="' + address + '"'
