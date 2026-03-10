@@ -1,5 +1,5 @@
-// internal/engine/status_test.go
-package engine
+// internal/memory/status_test.go
+package memory
 
 import "testing"
 

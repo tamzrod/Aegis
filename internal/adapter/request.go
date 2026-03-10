@@ -1,18 +1,7 @@
 // internal/adapter/request.go
+// Re-exports Request type from internal/memory.
 package adapter
 
-// Request is a fully parsed Modbus TCP request.
-type Request struct {
-	// TCP context
-	Port uint16
+import "github.com/tamzrod/Aegis/internal/memory"
 
-	// MBAP fields
-	TransactionID uint16
-	ProtocolID    uint16
-	Length        uint16
-
-	// PDU fields
-	UnitID       uint8
-	FunctionCode uint8
-	Payload      []byte
-}
+type Request = memory.Request

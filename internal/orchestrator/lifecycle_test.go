@@ -1,5 +1,5 @@
-// cmd/aegis/latency_test.go
-package main
+// internal/orchestrator/lifecycle_test.go
+package orchestrator
 
 import (
 	"sync"
