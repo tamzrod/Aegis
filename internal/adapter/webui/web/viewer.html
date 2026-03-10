@@ -628,6 +628,8 @@
       { value: 'float64',      label: 'FLOAT64'     },
       { value: 'timestamp32',  label: 'TIMESTAMP32' },
       { value: 'timestamp64',  label: 'TIMESTAMP64' },
+      { value: 'ascii',        label: 'ASCII'        },
+      { value: 'ascii-z',      label: 'ASCII-Z'      },
     ];
 
     // Word order options per width category.
@@ -1048,6 +1050,9 @@
     function typeIs64(type) {
       return type === 'uint64' || type === 'int64' || type === 'float64' || type === 'timestamp64';
     }
+    function typeIsAscii(type) {
+      return type === 'ascii' || type === 'ascii-z';
+    }
     function typeRegCount(type) {
       if (typeIs32(type)) return 2;
       if (typeIs64(type)) return 4;
@@ -1171,6 +1176,9 @@
       if (type === 'uint16') return String(v0);
       if (type === 'int16')  return String(v0 >= 0x8000 ? v0 - 0x10000 : v0);
 
+      // ASCII types decode all consecutive registers as character pairs.
+      if (typeIsAscii(type)) return decodeAscii(address, type === 'ascii-z');
+
       // 32-bit types need the next consecutive register.
       if (!hasConsecutiveRegisters(idx, address, 2)) return '\u2014';
       const v1 = lastValues[idx + 1].value;
@@ -1217,6 +1225,27 @@
         return formatDateTime(new Date(combined * 1000));
       }
       return null;
+    }
+
+    // ---- Decode ASCII string from consecutive registers starting at address ----
+    // Each register contributes two characters: high byte first, then low byte.
+    // (Modbus convention: high byte = bits 15-8, low byte = bits 7-0; e.g. 0x4142 → "AB")
+    // ascii-z mode stops at the first null byte.
+    function decodeAscii(address, stopAtNull) {
+      const idx = lastValues.findIndex(r => r.address === address);
+      if (idx < 0) return null;
+      let result = '';
+      for (let i = idx; i < lastValues.length; i++) {
+        if (lastValues[i].address !== address + (i - idx)) break; // non-consecutive
+        const reg = lastValues[i].value;
+        const hi  = (reg >> 8) & 0xFF;
+        const lo  = reg & 0xFF;
+        if (stopAtNull && hi === 0) break;
+        result += String.fromCharCode(hi);
+        if (stopAtNull && lo === 0) break;
+        result += String.fromCharCode(lo);
+      }
+      return result;
     }
 
     // ---- Render table ----
@@ -1278,6 +1307,16 @@
         for (let i = 1; i < regCount; i++) {
           consumedBy.set(address + i, address);
         }
+        // ASCII types consume all consecutive registers from the starting address.
+        if (typeIsAscii(type)) {
+          const startIdx = lastValues.findIndex(r => r.address === address);
+          if (startIdx >= 0) {
+            for (let i = startIdx + 1; i < lastValues.length; i++) {
+              if (lastValues[i].address !== address + (i - startIdx)) break;
+              consumedBy.set(lastValues[i].address, address);
+            }
+          }
+        }
 
         // Compute display values — use combined for multi-register types.
         const is32 = typeIs32(type);
@@ -1305,8 +1344,8 @@
           });
           rows += '</select></td>';
 
-          // Word Order dropdown (enabled for 32-bit and 64-bit types).
-          const woEnabled = is32 || is64;
+          // Word Order dropdown (enabled for 32-bit and 64-bit types; disabled for ASCII).
+          const woEnabled = (is32 || is64) && !typeIsAscii(type);
           rows += '<td class="col-wordorder"><select class="row-select wo-sel" data-addr="' + address + '"'
                + (woEnabled ? '' : ' disabled') + '>';
           rows += buildWordOrderOptions(type, wo);
