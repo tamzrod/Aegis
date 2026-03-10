@@ -491,6 +491,68 @@
       font-size: 0.78rem;
       white-space: nowrap;
     }
+
+    /* ---- Device searchable combobox ---- */
+    .device-combobox {
+      position: relative;
+      display: inline-block;
+    }
+
+    .device-combobox__input {
+      width: 160px;
+      cursor: text;
+      caret-color: #4a9eff;
+      box-sizing: border-box;
+    }
+
+    .device-combobox__list {
+      position: absolute;
+      top: calc(100% + 2px);
+      left: 0;
+      min-width: 100%;
+      background: #1a1a3a;
+      border: 1px solid #4a4a7a;
+      border-radius: 4px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      z-index: 200;
+      max-height: 220px;
+      overflow-y: auto;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.55);
+      scrollbar-width: thin;
+      scrollbar-color: #3d3d6e #1a1a3a;
+    }
+
+    .device-combobox__list li {
+      padding: 0.35rem 0.65rem;
+      font-size: 0.875rem;
+      color: #e0e0e0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .device-combobox__list li.selected {
+      color: #4a9eff;
+      font-weight: 500;
+    }
+
+    .device-combobox__list li.focused,
+    .device-combobox__list li:hover {
+      background: #2a2a5a;
+      color: #a0c4ff;
+    }
+
+    .device-combobox__list li.no-match {
+      color: #555;
+      cursor: default;
+      font-style: italic;
+    }
+
+    .device-combobox__list li.no-match:hover {
+      background: transparent;
+      color: #555;
+    }
   </style>
 </head>
 <body class="viewer-page">
@@ -512,9 +574,12 @@
 
       <div class="viewer-controls__group">
         <span class="viewer-controls__label">Device</span>
-        <select id="v-device" class="viewer-controls__input viewer-controls__input--medium">
-          <option value="">— select —</option>
-        </select>
+        <div class="device-combobox" id="v-device-wrap">
+          <input id="v-device-input" type="text"
+                 class="viewer-controls__input device-combobox__input"
+                 placeholder="— select —" autocomplete="off" spellcheck="false">
+          <ul id="v-device-list" class="device-combobox__list" hidden></ul>
+        </div>
       </div>
 
       <div id="v-endpoint-info" class="viewer-endpoint" style="display:none">
@@ -610,9 +675,15 @@
     let autoRefreshPausedByEdit = false; // true when refresh was paused due to active editing
     let activeEditors = 0;               // number of register fields currently being edited
 
-    const DEFAULT_REFRESH_RATE_MS = 1000;
-    const MIN_REFRESH_RATE_MS = 100;
-    const MAX_REFRESH_RATE_MS = 60000;
+    // ---- Device combobox state ----
+    let currentDeviceKey = '';
+    let comboboxOpen     = false;
+    let focusedIndex     = -1;
+
+    const DEFAULT_REFRESH_RATE_MS    = 1000;
+    const MIN_REFRESH_RATE_MS        = 100;
+    const MAX_REFRESH_RATE_MS        = 60000;
+    const COMBOBOX_BLUR_DELAY_MS     = 150; // allow mousedown on list item to fire before blur closes dropdown
     const MAX_NAME_LENGTH = 80; // Maximum characters for a register label.
 
     // Supported data types for register interpretation.
@@ -648,7 +719,14 @@
     ];
 
     // ---- DOM refs ----
-    const selDevice     = document.getElementById('v-device');
+    const deviceInput   = document.getElementById('v-device-input');
+    const deviceListEl  = document.getElementById('v-device-list');
+    const deviceWrap    = document.getElementById('v-device-wrap');
+    // selDevice proxy — keeps onDeviceChange / doRead / renderTable unchanged
+    const selDevice = {
+      get value()  { return currentDeviceKey; },
+      set value(k) { _setDeviceKey(k); }
+    };
     const selFC         = document.getElementById('v-fc');
     const inpAddress    = document.getElementById('v-address');
     const inpQuantity   = document.getElementById('v-quantity');
@@ -671,7 +749,6 @@
     loadDataview();
 
     // ---- Event listeners ----
-    selDevice.addEventListener('change', onDeviceChange);
     btnRead.addEventListener('click', doRead);
     chkRefresh.addEventListener('change', onAutoRefreshChange);
     inpRefreshRate.addEventListener('change', onRefreshRateChange);
@@ -681,22 +758,137 @@
     inpAddress.addEventListener('input', () => { userHasEditedFields = true; });
     inpQuantity.addEventListener('input', () => { userHasEditedFields = true; });
 
+    // ---- Device combobox helpers ----
+    function _setDeviceKey(key) {
+      currentDeviceKey = key;
+      const d = devices.find(x => x.key === key);
+      deviceInput.value = d ? (d.display_name || d.key) : '';
+    }
+
+    function _renderDropdown(query) {
+      const q = query.toLowerCase();
+      const filtered = q
+        ? devices.filter(d => (d.display_name || d.key).toLowerCase().includes(q))
+        : devices.slice();
+      deviceListEl.innerHTML = '';
+      focusedIndex = -1;
+      if (filtered.length === 0) {
+        const li = document.createElement('li');
+        li.textContent = 'No matches';
+        li.className = 'no-match';
+        deviceListEl.appendChild(li);
+      } else {
+        filtered.forEach(d => {
+          const li = document.createElement('li');
+          li.textContent = d.display_name || d.key;
+          li.dataset.key = d.key;
+          if (d.key === currentDeviceKey) li.classList.add('selected');
+          li.addEventListener('mousedown', e => {
+            e.preventDefault(); // keep focus on input until selection completes
+            _pickDevice(d.key);
+          });
+          deviceListEl.appendChild(li);
+        });
+      }
+    }
+
+    function _openDropdown() {
+      _renderDropdown('');
+      deviceListEl.hidden = false;
+      comboboxOpen = true;
+      deviceInput.select();
+    }
+
+    function _closeDropdown() {
+      deviceListEl.hidden = true;
+      comboboxOpen = false;
+      focusedIndex = -1;
+      // Restore display name in case the user typed but didn't select.
+      const d = devices.find(x => x.key === currentDeviceKey);
+      deviceInput.value = d ? (d.display_name || d.key) : '';
+    }
+
+    function _pickDevice(key) {
+      _setDeviceKey(key);
+      _closeDropdown();
+      onDeviceChange();
+    }
+
+    function _moveFocus(delta) {
+      const items = [...deviceListEl.querySelectorAll('li[data-key]')];
+      if (items.length === 0) return;
+      items.forEach(li => li.classList.remove('focused'));
+      if (focusedIndex === -1) {
+        // First navigation: ArrowDown → first item, ArrowUp → last item.
+        focusedIndex = delta > 0 ? 0 : items.length - 1;
+      } else {
+        focusedIndex = Math.max(0, Math.min(items.length - 1, focusedIndex + delta));
+      }
+      items[focusedIndex].classList.add('focused');
+      items[focusedIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    // ---- Device combobox event listeners ----
+    deviceInput.addEventListener('click', () => {
+      if (!comboboxOpen) _openDropdown();
+    });
+
+    deviceInput.addEventListener('input', () => {
+      if (!comboboxOpen) {
+        deviceListEl.hidden = false;
+        comboboxOpen = true;
+      }
+      _renderDropdown(deviceInput.value);
+    });
+
+    deviceInput.addEventListener('keydown', e => {
+      if (!comboboxOpen) {
+        if (e.key === 'ArrowDown' || e.key === 'Enter') {
+          _openDropdown();
+          e.preventDefault();
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        _moveFocus(1);
+        e.preventDefault();
+      } else if (e.key === 'ArrowUp') {
+        _moveFocus(-1);
+        e.preventDefault();
+      } else if (e.key === 'Enter') {
+        const items = [...deviceListEl.querySelectorAll('li[data-key]')];
+        if (focusedIndex >= 0 && items[focusedIndex]) {
+          _pickDevice(items[focusedIndex].dataset.key);
+        }
+        e.preventDefault();
+      } else if (e.key === 'Escape') {
+        _closeDropdown();
+        deviceInput.blur();
+        e.preventDefault();
+      }
+    });
+
+    deviceInput.addEventListener('blur', () => {
+      // Delay to let mousedown on a list item fire before blur closes the list.
+      setTimeout(() => { if (comboboxOpen) _closeDropdown(); }, COMBOBOX_BLUR_DELAY_MS);
+    });
+
+    // Close on click outside the combobox widget.
+    document.addEventListener('click', e => {
+      if (comboboxOpen && !deviceWrap.contains(e.target)) {
+        _closeDropdown();
+      }
+    });
+
     // ---- Load device list ----
     function loadDevices() {
       fetch('/api/config/view')
         .then(r => r.json())
         .then(data => {
           devices = data.devices || [];
-          selDevice.innerHTML = '<option value="">\u2014 select \u2014</option>';
-          devices.forEach(d => {
-            const opt = document.createElement('option');
-            opt.value = d.key;
-            opt.textContent = d.display_name || d.key;
-            selDevice.appendChild(opt);
-          });
           // Auto-select first device if available.
           if (devices.length > 0) {
-            selDevice.value = devices[0].key;
+            _setDeviceKey(devices[0].key);
             onDeviceChange(); // triggers doRead() internally
           }
         })
