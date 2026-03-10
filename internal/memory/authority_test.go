@@ -1,4 +1,4 @@
-// internal/adapter/authority_test.go
+// internal/memory/authority_test.go
 package memory
 
 import (
