@@ -20,9 +20,10 @@ type dataviewFileConfig struct {
 
 // dataviewRegister holds the per-register viewer configuration persisted in dataview.yaml.
 type dataviewRegister struct {
-	Name      string `yaml:"name,omitempty"       json:"name,omitempty"`
-	Type      string `yaml:"type,omitempty"       json:"type,omitempty"`
-	WordOrder string `yaml:"word_order,omitempty" json:"word_order,omitempty"`
+	Name       string `yaml:"name,omitempty"        json:"name,omitempty"`
+	Type       string `yaml:"type,omitempty"        json:"type,omitempty"`
+	WordOrder  string `yaml:"word_order,omitempty"  json:"word_order,omitempty"`
+	AsciiCount int    `yaml:"ascii_count,omitempty" json:"ascii_count,omitempty"`
 }
 
 // dataviewMu serialises concurrent access to the dataview file.
@@ -94,12 +95,13 @@ func (h *handlers) handleDataviewGet(w http.ResponseWriter, r *http.Request) {
 
 // dataviewPutRequest is the JSON body accepted by PUT /api/dataview.
 type dataviewPutRequest struct {
-	Device    string `json:"device"`
-	FC        uint8  `json:"fc"`
-	Address   uint16 `json:"address"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	WordOrder string `json:"word_order"`
+	Device     string `json:"device"`
+	FC         uint8  `json:"fc"`
+	Address    uint16 `json:"address"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	WordOrder  string `json:"word_order"`
+	AsciiCount int    `json:"ascii_count"`
 }
 
 // handleDataviewPut serves PUT /api/dataview.
@@ -160,9 +162,10 @@ func (h *handlers) handleDataviewPut(w http.ResponseWriter, r *http.Request) {
 	entry.Name = req.Name
 	entry.Type = req.Type
 	entry.WordOrder = req.WordOrder
+	entry.AsciiCount = req.AsciiCount
 
 	// Remove the entry when all fields are cleared.
-	if entry.Name == "" && entry.Type == "" && entry.WordOrder == "" {
+	if entry.Name == "" && entry.Type == "" && entry.WordOrder == "" && entry.AsciiCount == 0 {
 		delete(cfg.Dataview[req.Device][fcKey], addrKey)
 	} else {
 		cfg.Dataview[req.Device][fcKey][addrKey] = entry

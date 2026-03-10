@@ -632,6 +632,9 @@
       { value: 'ascii-z',      label: 'ASCII-Z'      },
     ];
 
+    // Allowed register counts for ASCII type.
+    const ASCII_COUNT_OPTIONS = [1, 2, 4];
+
     // Word order options per width category.
     const WORD_ORDERS_32 = [
       { value: 'AB', label: 'AB' },
@@ -728,17 +731,18 @@
     }
 
     // ---- Save a register entry to the backend ----
-    function saveEntry(device, fc, address, name, type, wordOrder) {
+    function saveEntry(device, fc, address, name, type, wordOrder, asciiCount) {
       fetch('/api/dataview/register', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          device:     device,
-          fc:         fc,
-          address:    address,
-          name:       name,
-          type:       type,
-          word_order: wordOrder,
+          device:      device,
+          fc:          fc,
+          address:     address,
+          name:        name,
+          type:        type,
+          word_order:  wordOrder,
+          ascii_count: asciiCount || 0,
         }),
       })
       .then(r => r.json())
@@ -748,10 +752,10 @@
         const addrKey = String(address);
         if (!dataviewConfig[device])        dataviewConfig[device]        = {};
         if (!dataviewConfig[device][fcKey]) dataviewConfig[device][fcKey] = {};
-        if (name === '' && type === '' && wordOrder === '') {
+        if (name === '' && type === '' && wordOrder === '' && !asciiCount) {
           delete dataviewConfig[device][fcKey][addrKey];
         } else {
-          dataviewConfig[device][fcKey][addrKey] = { name, type, word_order: wordOrder };
+          dataviewConfig[device][fcKey][addrKey] = { name, type, word_order: wordOrder, ascii_count: asciiCount || 0 };
         }
         renderTable(fc);
       })
@@ -1166,7 +1170,7 @@
 
     // ---- Compute parsed value from raw register value(s) ----
     // Returns a string, or null when no type is configured.
-    function parsedValue(address, type, wordOrder) {
+    function parsedValue(address, type, wordOrder, asciiCount) {
       if (!type) return null;
 
       const idx = lastValues.findIndex(r => r.address === address);
@@ -1176,8 +1180,10 @@
       if (type === 'uint16') return String(v0);
       if (type === 'int16')  return String(v0 >= 0x8000 ? v0 - 0x10000 : v0);
 
-      // ASCII types decode all consecutive registers as character pairs.
-      if (typeIsAscii(type)) return decodeAscii(address, type === 'ascii-z');
+      // ASCII type decodes a fixed number of registers (COUNT) as character pairs.
+      if (type === 'ascii') return decodeAscii(address, false, asciiCount || 1);
+      // ASCII-Z decodes all consecutive registers until a null byte.
+      if (type === 'ascii-z') return decodeAscii(address, true, 0);
 
       // 32-bit types need the next consecutive register.
       if (!hasConsecutiveRegisters(idx, address, 2)) return '\u2014';
@@ -1230,12 +1236,14 @@
     // ---- Decode ASCII string from consecutive registers starting at address ----
     // Each register contributes two characters: high byte first, then low byte.
     // (Modbus convention: high byte = bits 15-8, low byte = bits 7-0; e.g. 0x4142 → "AB")
-    // ascii-z mode stops at the first null byte.
-    function decodeAscii(address, stopAtNull) {
+    // count > 0: read exactly that many registers (ascii mode).
+    // count == 0 with stopAtNull: read consecutive registers until a null byte (ascii-z mode).
+    function decodeAscii(address, stopAtNull, count) {
       const idx = lastValues.findIndex(r => r.address === address);
       if (idx < 0) return null;
       let result = '';
-      for (let i = idx; i < lastValues.length; i++) {
+      const limit = count > 0 ? idx + count : lastValues.length;
+      for (let i = idx; i < limit; i++) {
         if (lastValues[i].address !== address + (i - idx)) break; // non-consecutive
         const reg = lastValues[i].value;
         const hi  = (reg >> 8) & 0xFF;
@@ -1298,17 +1306,25 @@
         const isExpanded = (expandedRow === address);
         const rowCls   = isExpanded ? 'selected' : '';
         const entry    = getEntry(device, fc, address);
-        const name     = entry.name      || '';
-        const type     = entry.type      || '';
-        const wo       = entry.word_order || '';
+        const name     = entry.name        || '';
+        const type     = entry.type        || '';
+        const wo       = entry.word_order  || '';
+        const asciiCnt = (type === 'ascii') ? (entry.ascii_count > 0 ? entry.ascii_count : 1) : 0;
 
         // Mark subsequent registers as consumed so they render as "used by" rows.
         const regCount = typeRegCount(type);
         for (let i = 1; i < regCount; i++) {
           consumedBy.set(address + i, address);
         }
-        // ASCII types consume all consecutive registers from the starting address.
-        if (typeIsAscii(type)) {
+        // ASCII type consumes exactly asciiCnt registers.
+        if (type === 'ascii') {
+          for (let i = 1; i < asciiCnt; i++) {
+            consumedBy.set(address + i, address);
+          }
+        }
+        // ASCII-Z consumes all consecutive registers until a null byte (unknown at render time,
+        // so mark all consecutive ones as consumed to keep the table tidy).
+        if (type === 'ascii-z') {
           const startIdx = lastValues.findIndex(r => r.address === address);
           if (startIdx >= 0) {
             for (let i = startIdx + 1; i < lastValues.length; i++) {
@@ -1344,15 +1360,23 @@
           });
           rows += '</select></td>';
 
-          // Word Order dropdown (enabled for 32-bit and 64-bit types; disabled for ASCII).
-          const woEnabled = (is32 || is64) && !typeIsAscii(type);
-          rows += '<td class="col-wordorder"><select class="row-select wo-sel" data-addr="' + address + '"'
-               + (woEnabled ? '' : ' disabled') + '>';
-          rows += buildWordOrderOptions(type, wo);
-          rows += '</select></td>';
+          // Second column: COUNT dropdown for ASCII, Word Order for 32/64-bit, disabled otherwise.
+          if (type === 'ascii') {
+            rows += '<td class="col-wordorder"><select class="row-select count-sel" data-addr="' + address + '">';
+            ASCII_COUNT_OPTIONS.forEach(n => {
+              rows += '<option value="' + n + '"' + (n === asciiCnt ? ' selected' : '') + '>' + n + '</option>';
+            });
+            rows += '</select></td>';
+          } else {
+            const woEnabled = (is32 || is64) && !typeIsAscii(type);
+            rows += '<td class="col-wordorder"><select class="row-select wo-sel" data-addr="' + address + '"'
+                 + (woEnabled ? '' : ' disabled') + '>';
+            rows += buildWordOrderOptions(type, wo);
+            rows += '</select></td>';
+          }
 
           // Parsed value.
-          const pv = parsedValue(address, type, wo);
+          const pv = parsedValue(address, type, wo, asciiCnt);
           rows += '<td class="col-parsed">'
                + (pv !== null ? escHtml(String(pv)) : '<span style="color:#555">\u2014</span>')
                + '</td>';
@@ -1414,7 +1438,22 @@
           } else {
             newWo = '';
           }
-          saveEntry(device, fc, addr, en.name || '', type2, newWo);
+          // Default COUNT to 1 when switching to ASCII.
+          const newCnt = (type2 === 'ascii') ? (en.ascii_count > 0 ? en.ascii_count : 1) : 0;
+          saveEntry(device, fc, addr, en.name || '', type2, newWo, newCnt);
+        });
+      });
+
+      // COUNT select change (only rendered for ASCII type).
+      tableBody.querySelectorAll('.count-sel').forEach(sel => {
+        sel.addEventListener('focus', () => onEditStart());
+        sel.addEventListener('blur',  () => onEditEnd());
+        sel.addEventListener('change', function (e) {
+          e.stopPropagation();
+          const addr = parseInt(this.getAttribute('data-addr'), 10);
+          const cnt  = parseInt(this.value, 10);
+          const en   = getEntry(device, fc, addr);
+          saveEntry(device, fc, addr, en.name || '', en.type || '', en.word_order || '', cnt);
         });
       });
 
@@ -1427,7 +1466,7 @@
           const addr = parseInt(this.getAttribute('data-addr'), 10);
           const wo2  = this.value;
           const en   = getEntry(device, fc, addr);
-          saveEntry(device, fc, addr, en.name || '', en.type || '', wo2);
+          saveEntry(device, fc, addr, en.name || '', en.type || '', wo2, en.ascii_count || 0);
         });
       });
     }
@@ -1458,15 +1497,16 @@
           onEditEnd();
           const newName = inp.value.trim();
           const en2     = getEntry(device, fc, addr);
-          const t2      = en2.type      || '';
-          const w2      = en2.word_order || '';
+          const t2      = en2.type        || '';
+          const w2      = en2.word_order  || '';
+          const c2      = en2.ascii_count || 0;
           const sp2     = document.createElement('span');
           sp2.className = newName ? 'name-text' : 'name-text empty';
           sp2.setAttribute('data-addr', String(addr));
           sp2.textContent = newName || '\u2014';
           td.replaceChild(sp2, inp);
           attachNameClick(sp2, device, fc);
-          saveEntry(device, fc, addr, newName, t2, w2);
+          saveEntry(device, fc, addr, newName, t2, w2, c2);
         }
 
         function cancel() {
