@@ -288,7 +288,86 @@ func TestDataviewPutClearEntry(t *testing.T) {
 	}
 }
 
-// TestDataviewPutPersistsAcrossRequests verifies that multiple PUT calls accumulate
+// TestDataviewPutAsciiCount verifies that PUT /api/dataview/register persists
+// the ascii_count field and GET /api/dataview returns it.
+func TestDataviewPutAsciiCount(t *testing.T) {
+	h, _ := newServerWithDataview(t)
+
+	body := `{"device":"plc1","fc":3,"address":100,"name":"Label","type":"ascii","ascii_count":4}`
+	req := httptest.NewRequest(http.MethodPut, "/api/dataview/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/dataview", nil)
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("GET want 200, got %d", rec2.Code)
+	}
+
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec2.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	entry := resp["registers"].(map[string]interface{})["plc1"].(map[string]interface{})["fc3"].(map[string]interface{})["100"].(map[string]interface{})
+	if entry["type"] != "ascii" {
+		t.Errorf("type: want 'ascii', got %q", entry["type"])
+	}
+	// JSON numbers decode as float64.
+	if got, ok := entry["ascii_count"].(float64); !ok || int(got) != 4 {
+		t.Errorf("ascii_count: want 4, got %v", entry["ascii_count"])
+	}
+}
+
+// TestDataviewPutAsciiCountClearedWithOtherFields verifies that ascii_count=0 is treated
+// as the zero value and the entry is removed when all other fields are also empty.
+func TestDataviewPutAsciiCountClearedWithOtherFields(t *testing.T) {
+	h, _ := newServerWithDataview(t)
+
+	// First create an ascii entry.
+	body := `{"device":"plc1","fc":3,"address":200,"name":"","type":"ascii","ascii_count":2}`
+	req := httptest.NewRequest(http.MethodPut, "/api/dataview/register", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Now clear it entirely.
+	body2 := `{"device":"plc1","fc":3,"address":200,"name":"","type":"","ascii_count":0}`
+	req2 := httptest.NewRequest(http.MethodPut, "/api/dataview/register", strings.NewReader(body2))
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	h.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("PUT clear want 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	req3 := httptest.NewRequest(http.MethodGet, "/api/dataview", nil)
+	rec3 := httptest.NewRecorder()
+	h.ServeHTTP(rec3, req3)
+	var resp map[string]interface{}
+	if err := json.NewDecoder(rec3.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	regs := resp["registers"].(map[string]interface{})
+	if plc1, ok := regs["plc1"]; ok {
+		if fc3, ok := plc1.(map[string]interface{})["fc3"]; ok {
+			if fc3m, ok := fc3.(map[string]interface{}); ok {
+				if _, found := fc3m["200"]; found {
+					t.Error("expected entry '200' to be removed after clearing all fields")
+				}
+			}
+		}
+	}
+}
+
 // entries in the dataview file.
 func TestDataviewPutPersistsAcrossRequests(t *testing.T) {
 	h, _ := newServerWithDataview(t)
