@@ -121,6 +121,13 @@
       cursor: pointer;
     }
 
+    .refresh-pause-msg {
+      font-size: 0.72rem;
+      color: #f0a040;
+      font-style: italic;
+      margin-left: 0.25rem;
+    }
+
     /* ---- Endpoint info bar ---- */
     .viewer-endpoint {
       font-size: 0.8rem;
@@ -566,6 +573,7 @@
           <input id="v-auto-refresh" type="checkbox">
           Auto-refresh <span id="v-refresh-dot" class="refresh-dot"></span>
         </label>
+        <span id="v-refresh-pause-msg" class="refresh-pause-msg" style="display:none">Auto-refresh paused while editing</span>
       </div>
 
     </div>
@@ -599,6 +607,8 @@
     let dataviewConfig = {}; // {device: {fc_key: {addr_key: {name,type,word_order}}}}
     let userHasEditedFields = false; // true once the user manually edits fc/address/quantity
     let requestInProgress = false;   // true while a read fetch is in-flight
+    let autoRefreshPausedByEdit = false; // true when refresh was paused due to active editing
+    let activeEditors = 0;               // number of register fields currently being edited
 
     const DEFAULT_REFRESH_RATE_MS = 1000;
     const MIN_REFRESH_RATE_MS = 100;
@@ -799,20 +809,62 @@
       return v;
     }
 
+    function startRefreshTimer() {
+      if (refreshTimer !== null) clearInterval(refreshTimer);
+      refreshTimer = setInterval(() => {
+        console.debug('Auto refresh tick');
+        doRead();
+      }, getRefreshRateMs());
+    }
+
+    function stopRefreshTimer() {
+      if (refreshTimer !== null) {
+        clearInterval(refreshTimer);
+        refreshTimer = null;
+      }
+    }
+
+    function updatePauseIndicator() {
+      const el = document.getElementById('v-refresh-pause-msg');
+      if (el) el.style.display = autoRefreshPausedByEdit ? '' : 'none';
+    }
+
+    function onEditStart() {
+      activeEditors++;
+      if (chkRefresh.checked && !autoRefreshPausedByEdit) {
+        autoRefreshPausedByEdit = true;
+        stopRefreshTimer();
+        updatePauseIndicator();
+      }
+    }
+
+    function onEditEnd() {
+      if (activeEditors > 0) activeEditors--;
+      if (activeEditors === 0 && autoRefreshPausedByEdit) {
+        autoRefreshPausedByEdit = false;
+        startRefreshTimer();
+        updatePauseIndicator();
+      }
+    }
+
     function onAutoRefreshChange() {
       if (chkRefresh.checked) {
         dotRefresh.classList.add('active');
-        doRead();
-        refreshTimer = setInterval(() => {
-          console.debug('Auto refresh tick');
+        if (activeEditors > 0) {
+          // Auto-refresh enabled while editing is active — pause immediately so
+          // the live timer does not re-render while the user is still editing.
+          autoRefreshPausedByEdit = true;
+          updatePauseIndicator();
+        } else {
           doRead();
-        }, getRefreshRateMs());
+          startRefreshTimer();
+        }
       } else {
         dotRefresh.classList.remove('active');
-        if (refreshTimer !== null) {
-          clearInterval(refreshTimer);
-          refreshTimer = null;
-        }
+        stopRefreshTimer();
+        // Reset pause state so editing end does not restart a disabled timer.
+        autoRefreshPausedByEdit = false;
+        updatePauseIndicator();
       }
     }
 
@@ -823,13 +875,9 @@
         if (v < MIN_REFRESH_RATE_MS) inpRefreshRate.value = MIN_REFRESH_RATE_MS;
         else if (v > MAX_REFRESH_RATE_MS) inpRefreshRate.value = MAX_REFRESH_RATE_MS;
       }
-      // Restart timer with new interval if auto-refresh is active.
+      // Restart timer with new interval if auto-refresh is active and not paused by editing.
       if (chkRefresh.checked && refreshTimer !== null) {
-        clearInterval(refreshTimer);
-        refreshTimer = setInterval(() => {
-          console.debug('Auto refresh tick');
-          doRead();
-        }, getRefreshRateMs());
+        startRefreshTimer();
       }
     }
 
@@ -1311,6 +1359,8 @@
 
       // Type select change.
       tableBody.querySelectorAll('.type-sel').forEach(sel => {
+        sel.addEventListener('focus', () => onEditStart());
+        sel.addEventListener('blur',  () => onEditEnd());
         sel.addEventListener('change', function (e) {
           e.stopPropagation();
           const addr  = parseInt(this.getAttribute('data-addr'), 10);
@@ -1331,6 +1381,8 @@
 
       // Word Order select change.
       tableBody.querySelectorAll('.wo-sel').forEach(sel => {
+        sel.addEventListener('focus', () => onEditStart());
+        sel.addEventListener('blur',  () => onEditEnd());
         sel.addEventListener('change', function (e) {
           e.stopPropagation();
           const addr = parseInt(this.getAttribute('data-addr'), 10);
@@ -1357,12 +1409,14 @@
         td.replaceChild(inp, this);
         inp.focus();
         inp.select();
+        onEditStart();
 
         let committed = false;
 
         function commit() {
           if (committed) return;
           committed = true;
+          onEditEnd();
           const newName = inp.value.trim();
           const en2     = getEntry(device, fc, addr);
           const t2      = en2.type      || '';
@@ -1379,6 +1433,7 @@
         function cancel() {
           if (committed) return;
           committed = true;
+          onEditEnd();
           const nm  = getEntry(device, fc, addr).name || '';
           const sp2 = document.createElement('span');
           sp2.className = nm ? 'name-text' : 'name-text empty';
